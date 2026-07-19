@@ -544,12 +544,23 @@ impl Cx {
                         position
                     };
 
-                    let d3d11_window =
-                        D3d11Window::new_popup(window_id, &d3d11_cx, size, screen_position);
-                    let mut d3d11_window = d3d11_window;
-                    d3d11_window
-                        .win32_window
-                        .apply_window_visuals(window.window_visuals());
+                    let transparent = window.transparent;
+                    let mut d3d11_window = D3d11Window::new_popup(
+                        window_id,
+                        &d3d11_cx,
+                        size,
+                        screen_position,
+                        transparent,
+                    );
+                    if !transparent {
+                        // A transparent popup is composited via DirectComposition;
+                        // the acrylic/layered visuals path would fight its
+                        // WS_EX_NOREDIRECTIONBITMAP HWND, so apply visuals only for
+                        // opaque popups.
+                        d3d11_window
+                            .win32_window
+                            .apply_window_visuals(window.window_visuals());
+                    }
                     window.window_geom = d3d11_window.window_geom.clone();
                     d3d11_windows.push(d3d11_window);
                     window.is_created = true;

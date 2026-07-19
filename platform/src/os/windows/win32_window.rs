@@ -275,11 +275,22 @@ impl Win32Window {
         }
     }
 
-    pub fn new_popup(window_id: WindowId, position: Vec2d, size: Vec2d) -> Win32Window {
+    pub fn new_popup(
+        window_id: WindowId,
+        position: Vec2d,
+        size: Vec2d,
+        transparent: bool,
+    ) -> Win32Window {
         let title = encode_wide("Makepad Popup");
 
         let style = WS_POPUP | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
-        let style_ex = WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
+        // A transparent popup uses a DirectComposition swapchain, which requires
+        // the HWND to have no redirection bitmap so DWM composites the swapchain
+        // directly (per-pixel alpha) instead of an opaque backing surface.
+        let mut style_ex = WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
+        if transparent {
+            style_ex |= crate::os::windows::dcomp::WS_EX_NOREDIRECTIONBITMAP;
+        }
 
         let dpi = with_win32_app(|app| app.dpi_functions.system_dpi_factor() as f64);
         let x = (position.x * dpi) as i32;
