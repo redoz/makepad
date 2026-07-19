@@ -2243,7 +2243,7 @@ fn shader_cache_dir() -> Option<&'static std::path::Path> {
 // would otherwise leave stale bytecode on disk that no longer matches what
 // the runtime expects.
 fn hlsl_cache_key(hlsl: &str) -> u64 {
-    const CACHE_KEY_VERSION: u8 = 2;
+    const CACHE_KEY_VERSION: u8 = 3;
     let mut hash: u64 = 0xcbf29ce484222325;
     hash ^= CACHE_KEY_VERSION as u64;
     hash = hash.wrapping_mul(0x100000001b3);
@@ -2257,18 +2257,18 @@ fn hlsl_cache_key(hlsl: &str) -> u64 {
 // Invoke D3DCompile (fxcompiler) on one stage. Thread-safe (pure CPU work)
 // so can be called from a background thread to parallelize startup compile.
 //
-// We pass D3DCOMPILE_SKIP_OPTIMIZATION because FXC's optimizer is what makes
-// shader compile times explode — it can spend many seconds on a single text
-// shader with loops. UI shaders are short-lived per frame and the win from
-// FXC-level optimization is tiny for this workload, while the cold-cache
-// startup cost is huge. If a specific shader is later shown to be a runtime
-// hotspot, it should be recompiled with optimizations on a background thread
-// and hot-swapped — that's a cleaner solution than paying the cost upfront
-// for every shader in the app.
+// We deliberately do NOT pass D3DCOMPILE_SKIP_OPTIMIZATION. FXC's *unoptimized*
+// codegen miscompiles trig-heavy sdf shaders (e.g. Sdf2d.arc_to): with skip-opt
+// it scalarizes the `inout Sdf2d` struct into registers and, under the register
+// pressure of the cos/sin/atan2 math, clobbers the struct's `pos` field — so a
+// following line_to reads a corrupted position and its segment flies off-screen
+// (the "arc spike"). The HLSL we emit is correct; only skip-opt output is wrong.
+// Enabling optimization produces correct code. Compile cost is amortized by the
+// on-disk DXBC cache (compile once per shader, then load bytecode) plus the
+// async background-compile path, so the startup hit is a one-time cold-cache cost.
 fn d3d_compile_hlsl(target: &str, entry: &str, shader: &str) -> Result<Vec<u8>, String> {
-    const D3DCOMPILE_SKIP_OPTIMIZATION: u32 = 1 << 2;
     const D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY: u32 = 1 << 12;
-    const FLAGS: u32 = D3DCOMPILE_SKIP_OPTIMIZATION | D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY;
+    const FLAGS: u32 = D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY;
     unsafe {
         let shader_bytes = shader.as_bytes();
         let mut blob = None;
