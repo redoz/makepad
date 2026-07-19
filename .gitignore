@@ -52,3 +52,6 @@ ggml-*.bin
 /kokoro_voices/
 __pycache__/
 tesla_credentials.json
+
+.claude
+.tokensave
