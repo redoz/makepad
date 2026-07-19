@@ -353,7 +353,13 @@ impl WindowHandle {
     /// dismissed (outside click, focus loss, Escape). The app must handle that
     /// event and call `close()` on the window handle. The popup is **not**
     /// auto-closed by the framework.
-    pub fn new_popup(cx: &mut Cx, parent: WindowId, position: Vec2d, size: Vec2d) -> Self {
+    pub fn new_popup(
+        cx: &mut Cx,
+        parent: WindowId,
+        position: Vec2d,
+        size: Vec2d,
+        transparent: bool,
+    ) -> Self {
         let window = cx.windows.alloc();
         let window_id = window.window_id();
         let grab_keyboard = {
@@ -364,6 +370,7 @@ impl WindowHandle {
             cxwindow.create_position = Some(position);
             cxwindow.create_app_id = default_app_id();
             cxwindow.is_popup = true;
+            cxwindow.transparent = transparent;
             cxwindow.popup_parent = Some(parent);
             cxwindow.popup_position = Some(position);
             cxwindow.popup_size = Some(size);

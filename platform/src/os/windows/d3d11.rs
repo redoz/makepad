@@ -85,7 +85,7 @@ use crate::{
                         DXGI_FORMAT_R8_UNORM,
                         DXGI_SAMPLE_DESC,
                     },
-                    CreateDXGIFactory2, IDXGIFactory2, IDXGIResource,
+                    CreateDXGIFactory2, IDXGIDevice, IDXGIFactory2, IDXGIResource,
                     IDXGISwapChain1, IDXGISwapChain2, DXGI_CREATE_FACTORY_FLAGS, DXGI_PRESENT, DXGI_RGBA,
                     DXGI_SCALING_NONE, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG,
                     DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT,
@@ -95,6 +95,10 @@ use crate::{
             System::Threading::WaitForSingleObject,
         },
     },
+};
+use crate::os::windows::dcomp::{
+    DCompositionCreateDevice, IDCompositionDevice, IDCompositionTarget, IDCompositionVisual,
+    IDXGIFactory2CompositionExt, DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_SCALING_STRETCH,
 };
 
 impl Cx {
@@ -851,6 +855,12 @@ pub struct D3d11Window {
     /// we track this at creation rather than inferring it from `frame_latency_waitable`
     /// (which can be null even on a waitable chain if the `IDXGISwapChain2` cast failed).
     pub waitable_swap_chain: bool,
+    // DirectComposition objects for a per-pixel-alpha popup. Present only when
+    // the popup was created transparent; kept alive here so the composited
+    // swapchain stays bound to the visual on the HWND for the window's lifetime.
+    pub dcomp_device: Option<IDCompositionDevice>,
+    pub dcomp_target: Option<IDCompositionTarget>,
+    pub dcomp_visual: Option<IDCompositionVisual>,
 }
 
 impl D3d11Window {
@@ -935,6 +945,9 @@ impl D3d11Window {
                 swap_chain: swap_chain,
                 frame_latency_waitable,
                 waitable_swap_chain: true,
+                dcomp_device: None,
+                dcomp_target: None,
+                dcomp_visual: None,
             }
         }
     }
@@ -944,14 +957,23 @@ impl D3d11Window {
         d3d11_cx: &D3d11Cx,
         size: Vec2d,
         position: Vec2d,
+        transparent: bool,
     ) -> D3d11Window {
-        let mut win32_window = Box::new(Win32Window::new_popup(window_id, position, size));
+        let mut win32_window =
+            Box::new(Win32Window::new_popup(window_id, position, size, transparent));
         win32_window.init(size);
 
         let wg = win32_window.get_window_geom();
 
         let sc_desc = DXGI_SWAP_CHAIN_DESC1 {
-            AlphaMode: DXGI_ALPHA_MODE_IGNORE,
+            // A composited (transparent) popup uses premultiplied alpha so the
+            // desktop shows through fractional-alpha pixels; an opaque popup
+            // ignores alpha as before.
+            AlphaMode: if transparent {
+                DXGI_ALPHA_MODE_PREMULTIPLIED
+            } else {
+                DXGI_ALPHA_MODE_IGNORE
+            },
             BufferCount: 2,
             Width: (wg.inner_size.x * wg.dpi_factor) as u32,
             Height: (wg.inner_size.y * wg.dpi_factor) as u32,
@@ -962,16 +984,56 @@ impl D3d11Window {
                 Count: 1,
                 Quality: 0,
             },
-            Scaling: DXGI_SCALING_NONE,
+            // CreateSwapChainForComposition requires STRETCH scaling; the opaque
+            // HWND path keeps NONE.
+            Scaling: if transparent {
+                DXGI_SCALING_STRETCH
+            } else {
+                DXGI_SCALING_NONE
+            },
             Stereo: FALSE,
             SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
         };
 
         unsafe {
-            let swap_chain = d3d11_cx
-                .factory
-                .CreateSwapChainForHwnd(&d3d11_cx.device, win32_window.hwnd, &sc_desc, None, None)
-                .unwrap();
+            let (swap_chain, dcomp_device, dcomp_target, dcomp_visual) = if transparent {
+                // Per-pixel alpha: a composition swapchain bound to a
+                // DirectComposition visual on the popup's WS_EX_NOREDIRECTIONBITMAP
+                // HWND. DWM composites the swapchain over the desktop, so the
+                // transparent regions of the drawn content reveal what's behind.
+                let swap_chain = d3d11_cx
+                    .factory
+                    .CreateSwapChainForComposition(&d3d11_cx.device, &sc_desc)
+                    .unwrap();
+                let dxgi_device: IDXGIDevice = d3d11_cx.device.cast().unwrap();
+                let dcomp_device: IDCompositionDevice =
+                    DCompositionCreateDevice(&dxgi_device).unwrap();
+                let dcomp_target = dcomp_device
+                    .CreateTargetForHwnd(win32_window.hwnd, true)
+                    .unwrap();
+                let dcomp_visual = dcomp_device.CreateVisual().unwrap();
+                dcomp_visual.SetContent(&swap_chain).unwrap();
+                dcomp_target.SetRoot(&dcomp_visual).unwrap();
+                dcomp_device.Commit().unwrap();
+                (
+                    swap_chain,
+                    Some(dcomp_device),
+                    Some(dcomp_target),
+                    Some(dcomp_visual),
+                )
+            } else {
+                let swap_chain = d3d11_cx
+                    .factory
+                    .CreateSwapChainForHwnd(
+                        &d3d11_cx.device,
+                        win32_window.hwnd,
+                        &sc_desc,
+                        None,
+                        None,
+                    )
+                    .unwrap();
+                (swap_chain, None, None, None)
+            };
 
             // Keep the low (1-frame) latency that the old device-level
             // SetMaximumFrameLatency(1) used to give popups, but WITHOUT requesting
@@ -1001,6 +1063,9 @@ impl D3d11Window {
                 // and the render loop will skip waiting on it.
                 frame_latency_waitable: HANDLE(std::ptr::null_mut()),
                 waitable_swap_chain: false,
+                dcomp_device,
+                dcomp_target,
+                dcomp_visual,
             }
         }
     }
