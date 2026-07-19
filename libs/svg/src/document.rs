@@ -711,36 +711,43 @@ impl SvgDocument {
                 }
                 SvgNode::Path(p) => {
                     let xf = p.transform.then(parent_xf);
+                    bounds.add_stroke(&p.style, &xf);
                     Self::bounds_path(&p.path, &xf, bounds);
                 }
                 SvgNode::Rect(r) => {
                     let xf = r.transform.then(parent_xf);
+                    bounds.add_stroke(&r.style, &xf);
                     bounds.add_point_xf(r.x, r.y, &xf);
                     bounds.add_point_xf(r.x + r.width, r.y + r.height, &xf);
                 }
                 SvgNode::Circle(c) => {
                     let xf = c.transform.then(parent_xf);
+                    bounds.add_stroke(&c.style, &xf);
                     bounds.add_point_xf(c.cx - c.r, c.cy - c.r, &xf);
                     bounds.add_point_xf(c.cx + c.r, c.cy + c.r, &xf);
                 }
                 SvgNode::Ellipse(e) => {
                     let xf = e.transform.then(parent_xf);
+                    bounds.add_stroke(&e.style, &xf);
                     bounds.add_point_xf(e.cx - e.rx, e.cy - e.ry, &xf);
                     bounds.add_point_xf(e.cx + e.rx, e.cy + e.ry, &xf);
                 }
                 SvgNode::Line(l) => {
                     let xf = l.transform.then(parent_xf);
+                    bounds.add_stroke(&l.style, &xf);
                     bounds.add_point_xf(l.x1, l.y1, &xf);
                     bounds.add_point_xf(l.x2, l.y2, &xf);
                 }
                 SvgNode::Polyline(p) => {
                     let xf = p.transform.then(parent_xf);
+                    bounds.add_stroke(&p.style, &xf);
                     for &(px, py) in &p.points {
                         bounds.add_point_xf(px, py, &xf);
                     }
                 }
                 SvgNode::Polygon(p) => {
                     let xf = p.transform.then(parent_xf);
+                    bounds.add_stroke(&p.style, &xf);
                     for &(px, py) in &p.points {
                         bounds.add_point_xf(px, py, &xf);
                     }
@@ -783,6 +790,10 @@ struct BoundsAccum {
     max_x: f32,
     max_y: f32,
     has_points: bool,
+    /// Largest stroke half-width (in transformed units) seen across all
+    /// visibly-stroked nodes. The centerline bbox is inflated by this so the
+    /// reported bounds cover the STROKED extent, not just the raw anchors.
+    max_stroke_hw: f32,
 }
 
 impl BoundsAccum {
@@ -793,6 +804,7 @@ impl BoundsAccum {
             max_x: f32::MIN,
             max_y: f32::MIN,
             has_points: false,
+            max_stroke_hw: 0.0,
         }
     }
 
@@ -805,9 +817,28 @@ impl BoundsAccum {
         self.has_points = true;
     }
 
+    /// Track the stroke half-width of a node so the final bounds can be
+    /// inflated to include the stroke, which paints centered on the anchors.
+    /// Only nodes with a real stroke paint contribute (default stroke is None).
+    fn add_stroke(&mut self, style: &SvgStyle, xf: &Transform2d) {
+        let has_stroke = matches!(&style.stroke, Some(p) if !matches!(p, SvgPaint::None));
+        if has_stroke {
+            let hw = 0.5 * style.stroke_width * xf.scale_factor();
+            if hw > self.max_stroke_hw {
+                self.max_stroke_hw = hw;
+            }
+        }
+    }
+
     fn result(&self) -> Option<(f32, f32, f32, f32)> {
         if self.has_points {
-            Some((self.min_x, self.min_y, self.max_x, self.max_y))
+            let hw = self.max_stroke_hw;
+            Some((
+                self.min_x - hw,
+                self.min_y - hw,
+                self.max_x + hw,
+                self.max_y + hw,
+            ))
         } else {
             None
         }
