@@ -980,10 +980,26 @@ impl Event {
                 if !cx.is_scrolling_allowed_within(&area) {
                     return Hit::Nothing;
                 }
+                // Scroll occlusion — mirror MouseDown's `handled` model so a
+                // topmost widget under the pointer hides the scroll from lower
+                // widgets. `handled_x`/`handled_y` are per-axis (a vertical
+                // scroll_bar only claims Y), so bail only when every axis that
+                // actually carries scroll is already claimed. `capture_overload`
+                // opts a widget back into already-claimed scroll.
+                if !options.capture_overload {
+                    let x_open = e.scroll.x != 0.0 && !e.handled_x.get();
+                    let y_open = e.scroll.y != 0.0 && !e.handled_y.get();
+                    if !x_open && !y_open {
+                        return Hit::Nothing;
+                    }
+                }
                 let digit_id = live_id!(mouse).into();
 
                 let rect = area.clipped_rect(&cx);
                 if hit_test(e.abs, &rect, &options.margin) {
+                    // Claim the scroll so lower widgets under the same point bail.
+                    e.handled_x.set(true);
+                    e.handled_y.set(true);
                     let device = DigitDevice::Mouse {
                         button: MouseButton::PRIMARY,
                     };
