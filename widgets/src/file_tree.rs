@@ -497,6 +497,7 @@ pub enum FileTreeAction {
     FileClicked(LiveId),
     FolderClicked(LiveId),
     ShouldFileStartDrag(LiveId),
+    FileRightClicked { node_id: LiveId, abs: DVec2 },
 }
 
 pub enum FileTreeNodeAction {
@@ -504,6 +505,7 @@ pub enum FileTreeNodeAction {
     Opening,
     Closing,
     ShouldStartDrag,
+    SecondaryClicked(DVec2),
 }
 
 impl FileTreeNode {
@@ -643,6 +645,9 @@ impl FileTreeNode {
                 if f.abs.distance(&f.abs_start) >= self.min_drag_distance {
                     actions.push((node_id, FileTreeNodeAction::ShouldStartDrag));
                 }
+            }
+            Hit::FingerDown(fe) if fe.mouse_button() == Some(MouseButton::SECONDARY) => {
+                actions.push((node_id, FileTreeNodeAction::SecondaryClicked(fe.abs)));
             }
             Hit::FingerDown(_) => {
                 self.animator_play(cx, ids!(select.on));
@@ -903,6 +908,9 @@ impl Widget for FileTree {
                         cx.widget_action(uid, FileTreeAction::ShouldFileStartDrag(node_id));
                     }
                 }
+                FileTreeNodeAction::SecondaryClicked(abs) => {
+                    cx.widget_action(uid, FileTreeAction::FileRightClicked { node_id, abs });
+                }
             }
         }
 
@@ -965,6 +973,15 @@ impl FileTreeRef {
         if let Some(item) = actions.find_widget_action(self.widget_uid()) {
             if let FileTreeAction::FolderClicked(file_id) = item.cast() {
                 return Some(file_id);
+            }
+        }
+        None
+    }
+
+    pub fn file_right_clicked(&self, actions: &Actions) -> Option<(LiveId, DVec2)> {
+        if let Some(item) = actions.find_widget_action(self.widget_uid()) {
+            if let FileTreeAction::FileRightClicked { node_id, abs } = item.cast() {
+                return Some((node_id, abs));
             }
         }
         None
