@@ -437,9 +437,41 @@ impl Cx {
 #[cfg(test)]
 mod tests {
     use super::{
-        remapped_small_font_dependency_path, should_skip_eager_resource_load,
+        normalize_path_str, remapped_small_font_dependency_path, should_skip_eager_resource_load,
         web_resource_base_path,
     };
+
+    #[test]
+    fn normalizes_windows_manifest_paths_to_forward_slashes() {
+        // A `\`-spelled manifest dir and its `/`-spelled abs path have to come
+        // out comparable, or crate resources never resolve in a wasm binary
+        // built on Windows.
+        assert_eq!(
+            normalize_path_str(r"C:\dev\makepad\widgets").as_deref(),
+            Some("C:/dev/makepad/widgets")
+        );
+        assert_eq!(
+            normalize_path_str("C:/dev/makepad/widgets/resources/IBMPlexSans-Text.ttf").as_deref(),
+            Some("C:/dev/makepad/widgets/resources/IBMPlexSans-Text.ttf")
+        );
+    }
+
+    #[test]
+    fn resolves_parent_segments_across_mixed_separators() {
+        assert_eq!(
+            normalize_path_str(r"C:\dev\makepad\draw/../../widgets/resources/x.ttf").as_deref(),
+            Some("C:/dev/widgets/resources/x.ttf")
+        );
+        assert_eq!(normalize_path_str("a/b/../.././..").as_deref(), None);
+    }
+
+    #[test]
+    fn preserves_posix_root() {
+        assert_eq!(
+            normalize_path_str("/home/runner/work/./waml/../waml/widgets").as_deref(),
+            Some("/home/runner/work/waml/widgets")
+        );
+    }
 
     #[test]
     fn skips_only_heavy_widgets_fallback_fonts() {
@@ -569,23 +601,43 @@ fn normalize_dependency_file_path(path: &str) -> Option<String> {
     Some(stack.join("/"))
 }
 
-#[cfg(target_arch = "wasm32")]
-fn normalize_path(path: &Path) -> Option<PathBuf> {
-    let mut out = PathBuf::new();
-    for comp in path.components() {
-        match comp {
-            std::path::Component::Prefix(prefix) => out.push(prefix.as_os_str()),
-            std::path::Component::RootDir => out.push(comp.as_os_str()),
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                if !out.pop() {
+/// Resolve `.` / `..` in a path that may use either separator, always
+/// producing `/`-separated output.
+///
+/// `std::path` on wasm is POSIX, so a backslash is an ordinary character
+/// there. A Windows build host bakes `\`-separated `CARGO_MANIFEST_DIR`
+/// strings into the binary, and those collapse to a single path component
+/// once they reach wasm — every `strip_prefix` against a `/`-separated
+/// absolute path then fails and no crate resource ever resolves to a
+/// web_url. Splitting on both separators ourselves keeps the two spellings
+/// comparable regardless of which OS built the wasm.
+#[cfg(any(target_arch = "wasm32", test))]
+fn normalize_path_str(path: &str) -> Option<String> {
+    let normalized = path.replace('\\', "/");
+    let rooted = normalized.starts_with('/');
+    let mut stack: Vec<&str> = Vec::new();
+    for part in normalized.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if stack.pop().is_none() {
                     return None;
                 }
             }
-            std::path::Component::Normal(part) => out.push(part),
+            other => stack.push(other),
         }
     }
-    Some(out)
+    let joined = stack.join("/");
+    Some(if rooted {
+        format!("/{}", joined)
+    } else {
+        joined
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn normalize_path(path: &Path) -> Option<PathBuf> {
+    normalize_path_str(&path.to_string_lossy()).map(PathBuf::from)
 }
 
 #[cfg(target_arch = "wasm32")]
