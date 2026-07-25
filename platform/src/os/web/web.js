@@ -1270,12 +1270,45 @@ export class WasmWebBrowser extends WasmBridge {
     }
 
     bind_screen_resize() {
+        this.resize_frame_id = 0;
+
+        // Resizing the canvas backing store wipes the drawing buffer. Doing that
+        // in the resize event while the redraw waits for a later animation frame
+        // lets the compositor present the cleared buffer - Edge flashes black for
+        // the whole of a window drag. So coalesce a drag's resize storm into one
+        // realloc per frame, and realloc + draw in the SAME task.
         this.handlers.on_screen_resize = () => {
-            this.update_window_info();
-            if (this.to_wasm !== undefined) {
-                this.to_wasm.ToWasmResizeWindow({ window_info: this.window_info });
-                this.FromWasmRequestAnimationFrame();
+            if (this.to_wasm === undefined) {
+                this.update_window_info();
+                return;
             }
+            if (this.resize_frame_id) {
+                return;
+            }
+            this.resize_frame_id = window.requestAnimationFrame(time => {
+                this.resize_frame_id = 0;
+                if (this.wasm == null) {
+                    return;
+                }
+                // We are about to pump an animation frame ourselves; drop any
+                // frame the pump already queued so this one is not doubled.
+                if (this.req_anim_frame_id) {
+                    window.cancelAnimationFrame(this.req_anim_frame_id);
+                    this.req_anim_frame_id = 0;
+                }
+                this.update_window_info();
+                // Two pumps, one task. The new geometry has to land in its own
+                // pump - a resize and an animation frame delivered together draw
+                // nothing, the tree is only dirty by the time that pump returns.
+                // Pumping the frame after it refills the freshly cleared buffer
+                // before the compositor gets to present it.
+                this.to_wasm.ToWasmResizeWindow({ window_info: this.window_info });
+                this.do_wasm_pump();
+                this.to_wasm.ToWasmAnimationFrame({ time: time / 1000.0 });
+                this.in_animation_frame = true;
+                this.do_wasm_pump();
+                this.in_animation_frame = false;
+            });
         }
 
         // TODO! BIND THESE SOMEWHERE USEFUL
