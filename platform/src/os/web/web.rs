@@ -1,13 +1,16 @@
 use {
     self::super::{from_wasm::*, to_wasm::*, web_media::CxWebMedia},
     crate::{
+        area::Area,
         cx::{Cx, OsType},
         cx_api::{CxOsApi, CxOsOp, OpenUrlInPlace},
         draw_pass::CxDrawPassParent,
         event::{
-            Event, MouseDownEvent, MouseMoveEvent, MouseUpEvent, NetworkResponse, ScrollEvent,
-            TextClipboardEvent, TimerEvent, ToWasmMsgEvent, TouchUpdateEvent,
-            VideoDecodingErrorEvent, VideoPlaybackCompletedEvent, VideoPlaybackPreparedEvent,
+            EmulatedPointer, Event, KeyModifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+            MouseUpEvent, NetworkResponse, ScrollEvent, TextClipboardEvent, TimerEvent,
+            ToWasmMsgEvent,
+            TouchMouseEmulator, TouchUpdateEvent, VideoDecodingErrorEvent,
+            VideoPlaybackCompletedEvent, VideoPlaybackPreparedEvent,
             VideoPlaybackResourcesReleasedEvent, VideoSource, VideoTextureUpdatedEvent, WindowGeom,
             WindowGeomChangeEvent,
         },
@@ -15,10 +18,10 @@ use {
         makepad_wasm_bridge::{FromWasm, FromWasmMsg, ToWasm, ToWasmMsg, WasmDataU8},
         permission::{Permission, PermissionResult, PermissionStatus},
         thread::SignalToUI,
-        window::CxWindowPool,
+        window::{CxWindowPool, WindowId},
         HttpError, HttpProgress, HttpResponse, Vec2d,
     },
-    std::cell::RefCell,
+    std::cell::{Cell, RefCell},
     std::panic,
     std::rc::Rc,
 };
@@ -76,6 +79,62 @@ impl Cx {
         params.search = search;
         params.hash = hash;
         true
+    }
+
+    /// Opt into single-touch -> mouse emulation for this app (see
+    /// `event::touch_emu`). Call it from `Event::Startup`. An app that wants the
+    /// raw touch stream -- and handles it everywhere, not just in its canvas --
+    /// should leave this off.
+    pub fn set_touch_emulates_mouse(&mut self, on: bool) {
+        self.os.touch_emulates_mouse = on;
+    }
+
+    /// Dispatch one emulated mouse event with the same `CxFingers` bookkeeping
+    /// the real `ToWasmMouse*` arms do -- without it the mouse digit is never
+    /// released and hover never cycles.
+    fn dispatch_emulated_pointer(
+        &mut self,
+        pointer: EmulatedPointer,
+        window_id: WindowId,
+        modifiers: KeyModifiers,
+        time: f64,
+    ) {
+        match pointer {
+            EmulatedPointer::Down(abs) => {
+                self.fingers.process_tap_count(abs, time);
+                self.fingers.mouse_down(MouseButton::PRIMARY, window_id);
+                self.call_event_handler(&Event::MouseDown(MouseDownEvent {
+                    abs,
+                    button: MouseButton::PRIMARY,
+                    window_id,
+                    modifiers,
+                    time,
+                    handled: Cell::new(Area::Empty),
+                }));
+            }
+            EmulatedPointer::Move(abs) => {
+                self.call_event_handler(&Event::MouseMove(MouseMoveEvent {
+                    abs,
+                    window_id,
+                    modifiers,
+                    time,
+                    handled: Cell::new(Area::Empty),
+                }));
+                self.fingers.cycle_hover_area(live_id!(mouse).into());
+                self.fingers.switch_captures();
+            }
+            EmulatedPointer::Up(abs) => {
+                self.call_event_handler(&Event::MouseUp(MouseUpEvent {
+                    abs,
+                    button: MouseButton::PRIMARY,
+                    window_id,
+                    modifiers,
+                    time,
+                }));
+                self.fingers.mouse_up(MouseButton::PRIMARY);
+                self.fingers.cycle_hover_area(live_id!(mouse).into());
+            }
+        }
     }
 
     // incoming to_wasm. There is absolutely no other entrypoint
@@ -167,15 +226,29 @@ impl Cx {
                     for touch in e.touches.iter_mut() {
                         self.dpi_override_scale(&mut touch.abs, window_id);
                     }
-                    self.fingers.process_touch_update_start(e.time, &e.touches);
-                    let e = Event::TouchUpdate(e);
-                    self.call_event_handler(&e);
-                    let e = if let Event::TouchUpdate(e) = e {
-                        e
+                    // While a lone finger stands in for the mouse the app must
+                    // NOT also see the touch, or every hit-driven widget takes
+                    // the same press twice.
+                    let deliver = if self.os.touch_emulates_mouse {
+                        let step = self.os.touch_emu.step(&e.touches);
+                        for pointer in step.pointers {
+                            self.dispatch_emulated_pointer(pointer, e.window_id, e.modifiers, e.time);
+                        }
+                        step.deliver_touch_update
                     } else {
-                        panic!()
+                        true
                     };
-                    self.fingers.process_touch_update_end(&e.touches);
+                    if deliver {
+                        self.fingers.process_touch_update_start(e.time, &e.touches);
+                        let e = Event::TouchUpdate(e);
+                        self.call_event_handler(&e);
+                        let e = if let Event::TouchUpdate(e) = e {
+                            e
+                        } else {
+                            panic!()
+                        };
+                        self.fingers.process_touch_update_end(&e.touches);
+                    }
                 }
 
                 live_id!(ToWasmMouseDown) => {
@@ -1140,6 +1213,12 @@ pub struct CxOs {
     pub(crate) from_wasm_js: Vec<String>,
 
     pub(crate) media: CxWebMedia,
+
+    /// Opt-in: let a lone finger drive the mouse event stream. Off by default --
+    /// an app that already handles `TouchUpdate` end to end wants the raw
+    /// touches. See `Cx::set_touch_emulates_mouse`.
+    pub(crate) touch_emulates_mouse: bool,
+    pub(crate) touch_emu: TouchMouseEmulator,
 }
 
 impl Default for CxOs {
@@ -1157,6 +1236,9 @@ impl Default for CxOs {
             from_wasm_js: Vec::new(),
 
             media: CxWebMedia::default(),
+
+            touch_emulates_mouse: false,
+            touch_emu: TouchMouseEmulator::default(),
         }
     }
 }
