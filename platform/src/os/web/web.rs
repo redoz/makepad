@@ -100,19 +100,33 @@ impl Cx {
                     );
                     self.os_type = tw.browser_info.into();
                     self.xr_capabilities = tw.xr_capabilities.into();
-                    let id_zero = CxWindowPool::id_zero();
-                    let mut new_geom: WindowGeom = tw.window_info.into();
-                    {
-                        let window = &mut self.windows[id_zero];
-                        window.os_dpi_factor = Some(new_geom.dpi_factor);
-                        new_geom = window.native_window_geom_to_layout(new_geom);
-                    }
-                    self.os.window_geom = new_geom.clone();
-                    self.windows[id_zero].window_geom = new_geom;
-                    //self.default_inner_window_size = self.os.window_geom.inner_size;
 
                     self.set_physical_keyboard_state(true);
+                    // Startup has to come first. `app_main!` builds the app only
+                    // when it sees `Event::Startup`, and the app's live tree is
+                    // what allocates window zero (`WindowHandle::new`). On web
+                    // `ToWasmInit` is the very first event, so touching
+                    // `self.windows` before this point indexes an empty pool and
+                    // panics on boot. Desktop never sees the ordering: its event
+                    // loop dispatches Startup before the OS makes any window.
                     self.call_event_handler(&Event::Startup);
+
+                    let id_zero = CxWindowPool::id_zero();
+                    let mut new_geom: WindowGeom = tw.window_info.into();
+                    // An app whose live tree declares no `Window` at all leaves
+                    // the pool empty even after Startup; it has no geometry to
+                    // receive, so skip rather than panic.
+                    if self.windows.is_valid(id_zero) {
+                        {
+                            let window = &mut self.windows[id_zero];
+                            window.os_dpi_factor = Some(new_geom.dpi_factor);
+                            new_geom = window.native_window_geom_to_layout(new_geom);
+                        }
+                        self.os.window_geom = new_geom.clone();
+                        self.windows[id_zero].window_geom = new_geom;
+                    }
+                    //self.default_inner_window_size = self.os.window_geom.inner_size;
+
                     self.redraw_all();
                     //self.platform.from_wasm(FromWasmCreateThread{thread_id:1});
                 }
