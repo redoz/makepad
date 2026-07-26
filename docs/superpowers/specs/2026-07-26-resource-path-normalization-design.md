@@ -1,5 +1,10 @@
 # Resource Path Normalization Design
 
+> Superseded by
+> `2026-07-26-wasm-logical-resource-identity-design.md`. The replacement
+> removes build-host manifest paths from WebAssembly resource identity rather
+> than teaching WebAssembly to normalize host filesystem paths.
+
 ## Goal
 
 Make crate-resource lookup work in WebAssembly binaries built on Windows
