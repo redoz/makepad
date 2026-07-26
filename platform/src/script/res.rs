@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fs::File;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::Read;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -436,8 +436,11 @@ impl Cx {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::{
-        remapped_small_font_dependency_path, should_skip_eager_resource_load,
+        normalize_path_str, remapped_small_font_dependency_path,
+        resolve_dependency_path_from_manifests, should_skip_eager_resource_load,
         web_resource_base_path,
     };
 
@@ -499,6 +502,77 @@ mod tests {
         assert_eq!(
             web_resource_base_path("/examples/splash/index.html"),
             "examples/splash"
+        );
+    }
+
+    #[test]
+    fn normalizes_build_host_path_separators() {
+        assert_eq!(
+            normalize_path_str(r"C:\dev\makepad\widgets").as_deref(),
+            Some("C:/dev/makepad/widgets")
+        );
+        assert_eq!(
+            normalize_path_str(r"C:/dev\makepad/widgets\resources/font.ttf").as_deref(),
+            Some("C:/dev/makepad/widgets/resources/font.ttf")
+        );
+    }
+
+    #[test]
+    fn resolves_parent_segments_without_crossing_relative_or_posix_root() {
+        assert_eq!(normalize_path_str("a/b/../c").as_deref(), Some("a/c"));
+        assert_eq!(normalize_path_str("a/../../c"), None);
+        assert_eq!(normalize_path_str("/a/../c").as_deref(), Some("/c"));
+        assert_eq!(normalize_path_str("/../c"), None);
+    }
+
+    #[test]
+    fn preserves_drive_root_and_rejects_escape() {
+        assert_eq!(
+            normalize_path_str(r"C:\a\..\c").as_deref(),
+            Some("C:/c")
+        );
+        assert_eq!(normalize_path_str(r"C:\..\c"), None);
+        assert_eq!(normalize_path_str("C:/").as_deref(), Some("C:/"));
+        assert_eq!(
+            normalize_path_str("C:relative/path").as_deref(),
+            Some("C:relative/path")
+        );
+    }
+
+    #[test]
+    fn preserves_unc_share_and_rejects_escape() {
+        assert_eq!(
+            normalize_path_str(r"\\server\share\a\..\c").as_deref(),
+            Some("//server/share/c")
+        );
+        assert_eq!(normalize_path_str(r"\\server\share\..\c"), None);
+        assert_eq!(
+            normalize_path_str(r"\\server\share").as_deref(),
+            Some("//server/share")
+        );
+        assert_eq!(normalize_path_str(r"\\server"), None);
+        assert_eq!(normalize_path_str(r"\\\share\file"), None);
+    }
+
+    #[test]
+    fn resolves_against_the_longest_normalized_manifest_prefix() {
+        let manifests = HashMap::from([
+            ("workspace".to_string(), r"C:\dev\makepad".to_string()),
+            (
+                "widgets".to_string(),
+                r"C:\dev\makepad\widgets".to_string(),
+            ),
+        ]);
+
+        assert_eq!(
+            resolve_dependency_path_from_manifests(
+                "C:/dev/makepad/widgets/resources/font.ttf",
+                None,
+                None,
+                &manifests,
+            )
+            .as_deref(),
+            Some("widgets/resources/font.ttf")
         );
     }
 }
@@ -569,31 +643,74 @@ fn normalize_dependency_file_path(path: &str) -> Option<String> {
     Some(stack.join("/"))
 }
 
-#[cfg(target_arch = "wasm32")]
-fn normalize_path(path: &Path) -> Option<PathBuf> {
-    let mut out = PathBuf::new();
-    for comp in path.components() {
-        match comp {
-            std::path::Component::Prefix(prefix) => out.push(prefix.as_os_str()),
-            std::path::Component::RootDir => out.push(comp.as_os_str()),
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                if !out.pop() {
-                    return None;
-                }
-            }
-            std::path::Component::Normal(part) => out.push(part),
-        }
-    }
-    Some(out)
+#[cfg(any(target_arch = "wasm32", test))]
+enum PathAnchor<'a> {
+    Relative,
+    Posix,
+    Drive(&'a str),
+    Unc { server: &'a str, share: &'a str },
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
+fn normalize_path_str(path: &str) -> Option<String> {
+    let normalized = path.replace('\\', "/");
+    let bytes = normalized.as_bytes();
+
+    let (anchor, remainder) = if let Some(unc) = normalized.strip_prefix("//") {
+        let mut parts = unc.splitn(3, '/');
+        let server = parts.next().filter(|part| !part.is_empty())?;
+        let share = parts.next().filter(|part| !part.is_empty())?;
+        (
+            PathAnchor::Unc { server, share },
+            parts.next().unwrap_or_default(),
+        )
+    } else if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && bytes[2] == b'/'
+    {
+        (PathAnchor::Drive(&normalized[..2]), &normalized[3..])
+    } else if let Some(remainder) = normalized.strip_prefix('/') {
+        (PathAnchor::Posix, remainder)
+    } else {
+        (PathAnchor::Relative, normalized.as_str())
+    };
+
+    let mut components = Vec::new();
+    for component in remainder.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                components.pop()?;
+            }
+            component => components.push(component),
+        }
+    }
+
+    let suffix = components.join("/");
+    Some(match anchor {
+        PathAnchor::Relative => suffix,
+        PathAnchor::Posix => format!("/{suffix}"),
+        PathAnchor::Drive(drive) if suffix.is_empty() => format!("{drive}/"),
+        PathAnchor::Drive(drive) => format!("{drive}/{suffix}"),
+        PathAnchor::Unc { server, share } if suffix.is_empty() => {
+            format!("//{server}/{share}")
+        }
+        PathAnchor::Unc { server, share } => format!("//{server}/{share}/{suffix}"),
+    })
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn normalize_path(path: &Path) -> Option<PathBuf> {
+    normalize_path_str(&path.to_string_lossy()).map(PathBuf::from)
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
 fn normalize_manifest_relative_path(path: &Path) -> Option<String> {
     normalize_dependency_file_path(&path.to_string_lossy().replace('\\', "/"))
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 fn resolve_dependency_path_from_manifests(
     abs_path: &str,
     default_crate_name: Option<&str>,
