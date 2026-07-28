@@ -441,6 +441,8 @@ pub struct FileTree {
 
     #[live]
     node_height: f64,
+    #[live(true)]
+    auto_toggle_folders: bool,
 
     #[live]
     draw_scroll_shadow: DrawScrollShadow,
@@ -506,6 +508,39 @@ pub enum FileTreeNodeAction {
     Closing,
     ShouldStartDrag,
     SecondaryClicked(DVec2),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FolderPressTransition {
+    Opening,
+    Closing,
+}
+
+fn folder_press_transition(
+    auto_toggle_folders: bool,
+    currently_open: bool,
+) -> Option<FolderPressTransition> {
+    auto_toggle_folders.then_some(if currently_open {
+        FolderPressTransition::Closing
+    } else {
+        FolderPressTransition::Opening
+    })
+}
+
+fn apply_folder_transition(
+    open_nodes: &mut HashSet<LiveId>,
+    node_id: LiveId,
+    transition: Option<FolderPressTransition>,
+) {
+    match transition {
+        Some(FolderPressTransition::Opening) => {
+            open_nodes.insert(node_id);
+        }
+        Some(FolderPressTransition::Closing) => {
+            open_nodes.remove(&node_id);
+        }
+        None => {}
+    }
 }
 
 impl FileTreeNode {
@@ -628,6 +663,7 @@ impl FileTreeNode {
         cx: &mut Cx,
         event: &Event,
         node_id: LiveId,
+        auto_toggle_folders: bool,
         _scope: &mut Scope,
         actions: &mut Vec<(LiveId, FileTreeNodeAction)>,
     ) {
@@ -652,12 +688,19 @@ impl FileTreeNode {
             Hit::FingerDown(_) => {
                 self.animator_play(cx, ids!(select.on));
                 if self.is_folder {
-                    if self.animator_in_state(cx, ids!(open.on)) {
-                        self.animator_play(cx, ids!(open.off));
-                        actions.push((node_id, FileTreeNodeAction::Closing));
-                    } else {
-                        self.animator_play(cx, ids!(open.on));
-                        actions.push((node_id, FileTreeNodeAction::Opening));
+                    match folder_press_transition(
+                        auto_toggle_folders,
+                        self.animator_in_state(cx, ids!(open.on)),
+                    ) {
+                        Some(FolderPressTransition::Opening) => {
+                            self.animator_play(cx, ids!(open.on));
+                            actions.push((node_id, FileTreeNodeAction::Opening));
+                        }
+                        Some(FolderPressTransition::Closing) => {
+                            self.animator_play(cx, ids!(open.off));
+                            actions.push((node_id, FileTreeNodeAction::Closing));
+                        }
+                        None => {}
                     }
                 }
                 actions.push((node_id, FileTreeNodeAction::WasClicked));
@@ -875,16 +918,31 @@ impl Widget for FileTree {
         let mut node_actions = Vec::new();
 
         for (node_id, node) in self.tree_nodes.iter_mut() {
-            node.handle_event(cx, event, *node_id, scope, &mut node_actions);
+            node.handle_event(
+                cx,
+                event,
+                *node_id,
+                self.auto_toggle_folders,
+                scope,
+                &mut node_actions,
+            );
         }
 
         for (node_id, node_action) in node_actions {
             match node_action {
                 FileTreeNodeAction::Opening => {
-                    self.open_nodes.insert(node_id);
+                    apply_folder_transition(
+                        &mut self.open_nodes,
+                        node_id,
+                        Some(FolderPressTransition::Opening),
+                    );
                 }
                 FileTreeNodeAction::Closing => {
-                    self.open_nodes.remove(&node_id);
+                    apply_folder_transition(
+                        &mut self.open_nodes,
+                        node_id,
+                        Some(FolderPressTransition::Closing),
+                    );
                 }
                 FileTreeNodeAction::WasClicked => {
                     cx.set_key_focus(self.scroll_bars.area());
@@ -947,6 +1005,54 @@ impl Widget for FileTree {
             self.draw_state.end();
         }
         DrawStep::done()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folder_press_defaults_to_existing_toggle_transition() {
+        let id = LiveId::from_str("/sales");
+        let mut open_nodes = HashSet::new();
+        apply_folder_transition(
+            &mut open_nodes,
+            id,
+            folder_press_transition(true, false),
+        );
+        assert!(open_nodes.contains(&id));
+        apply_folder_transition(
+            &mut open_nodes,
+            id,
+            folder_press_transition(true, true),
+        );
+        assert!(!open_nodes.contains(&id));
+    }
+
+    #[test]
+    fn folder_press_opt_out_emits_no_fold_transition() {
+        let id = LiveId::from_str("/sales");
+        let mut open_nodes = HashSet::new();
+        let transition = folder_press_transition(false, false);
+        apply_folder_transition(&mut open_nodes, id, transition);
+        let emitted = FileTreeAction::FolderClicked(id);
+        assert!(open_nodes.is_empty());
+        assert!(matches!(
+            emitted,
+            FileTreeAction::FolderClicked(clicked) if clicked == id
+        ));
+    }
+
+    #[test]
+    fn folder_clicked_is_independent_of_fold_transition() {
+        let node_id = LiveId::from_str("/sales");
+        let emitted = FileTreeAction::FolderClicked(node_id);
+        assert!(matches!(
+            emitted,
+            FileTreeAction::FolderClicked(id) if id == node_id
+        ));
+        assert_eq!(folder_press_transition(false, false), None);
     }
 }
 
