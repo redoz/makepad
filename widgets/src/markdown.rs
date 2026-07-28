@@ -235,6 +235,10 @@ fn fragment_scroll_y(anchors: &[(String, f64)], fragment: &str) -> Option<f64> {
         .map(|(_, y)| *y)
 }
 
+fn content_local_heading_y(heading_y: f64, scroll_y: f64, content_origin_y: f64) -> f64 {
+    heading_y + scroll_y - content_origin_y
+}
+
 #[derive(Script, ScriptHook, Widget)]
 pub struct Markdown {
     #[source]
@@ -310,6 +314,8 @@ impl Markdown {
 
     fn process_markdown_doc(&mut self, cx: &mut Cx2d) {
         self.heading_anchors.clear();
+        let scroll_y = self.scroll_bars.get_scroll_pos().y;
+        let content_origin_y = cx.turtle().pos().y + scroll_y;
         let tf = &mut self.text_flow;
         // Track state for nested formatting
         let mut list_stack: Vec<ListState> = Vec::new();
@@ -344,7 +350,9 @@ impl Markdown {
                     };
                     tf.push_size_abs_scale(scale);
                     tf.bold.push();
-                    heading_state = Some((String::new(), cx.turtle().pos().y));
+                    let y =
+                        content_local_heading_y(cx.turtle().pos().y, scroll_y, content_origin_y);
+                    heading_state = Some((String::new(), y));
                 }
                 MdEvent::End(TagEnd::Heading(_level)) => {
                     if let Some((text, y)) = heading_state.take() {
@@ -852,5 +860,21 @@ mod tests {
         let markdown = WidgetRef::empty().as_markdown();
         let mut cx = Cx::new(Box::new(|_, _| {}));
         assert!(!markdown.scroll_to_fragment(&mut cx, "missing"));
+    }
+
+    #[test]
+    fn heading_anchor_stays_stable_after_scrolled_redraw() {
+        let first_y = content_local_heading_y(620.0, 0.0, 120.0);
+        let first_anchors = vec![("details".into(), first_y)];
+        let scroll_y = fragment_scroll_y(&first_anchors, "details").unwrap();
+
+        let redrawn_y = content_local_heading_y(120.0, scroll_y, 120.0);
+        let redrawn_anchors = vec![("details".into(), redrawn_y)];
+
+        assert_eq!(scroll_y, 500.0);
+        assert_eq!(
+            fragment_scroll_y(&redrawn_anchors, "details"),
+            Some(500.0)
+        );
     }
 }
