@@ -1,11 +1,12 @@
 use crate::{
     link_label::LinkLabel, makepad_derive_widget::*, makepad_draw::*, text_flow::TextFlow,
-    widget::*, WidgetMatchEvent,
+    scroll_bars::ScrollBars, widget::*, WidgetMatchEvent,
 };
 
 use pulldown_cmark::{
     Alignment, CodeBlockKind, Event as MdEvent, HeadingLevel, Options, Parser, Tag, TagEnd,
 };
+use std::collections::HashMap;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
@@ -203,6 +204,37 @@ struct ListState {
     start_number: Option<u64>,
 }
 
+fn heading_slug(text: &str, prior: &mut HashMap<String, usize>) -> String {
+    let mut slug = String::new();
+    let mut pending_dash = false;
+    for ch in text.chars().flat_map(char::to_lowercase) {
+        if ch.is_alphanumeric() || ch == '_' || ch == '-' {
+            if pending_dash && !slug.is_empty() && !slug.ends_with('-') {
+                slug.push('-');
+            }
+            pending_dash = false;
+            slug.push(ch);
+        } else if ch.is_whitespace() {
+            pending_dash = true;
+        }
+    }
+    let count = prior.entry(slug.clone()).or_insert(0);
+    let resolved = if *count == 0 {
+        slug
+    } else {
+        format!("{slug}-{count}")
+    };
+    *count += 1;
+    resolved
+}
+
+fn fragment_scroll_y(anchors: &[(String, f64)], fragment: &str) -> Option<f64> {
+    anchors
+        .iter()
+        .find(|(slug, _)| slug == fragment)
+        .map(|(_, y)| *y)
+}
+
 #[derive(Script, ScriptHook, Widget)]
 pub struct Markdown {
     #[source]
@@ -231,6 +263,10 @@ pub struct Markdown {
     auto_id: u64,
     #[live]
     heading_base_scale: f64,
+    #[live]
+    scroll_bars: ScrollBars,
+    #[rust]
+    heading_anchors: Vec<(String, f64)>,
 }
 
 impl Widget for Markdown {
@@ -239,15 +275,18 @@ impl Widget for Markdown {
     }
 
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
+        self.scroll_bars.handle_event(cx, event, scope);
         self.text_flow.handle_event(cx, event, scope);
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         self.auto_id = 0;
 
-        self.begin(cx, walk);
+        self.scroll_bars.begin(cx, walk, Layout::default());
+        self.text_flow.begin(cx, Walk::fill_fit());
         self.process_markdown_doc(cx);
-        self.end(cx);
+        self.text_flow.end(cx);
+        self.scroll_bars.end(cx);
 
         DrawStep::done()
     }
@@ -265,11 +304,18 @@ impl Widget for Markdown {
 }
 
 impl Markdown {
+    fn fragment_y(&self, fragment: &str) -> Option<f64> {
+        fragment_scroll_y(&self.heading_anchors, fragment)
+    }
+
     fn process_markdown_doc(&mut self, cx: &mut Cx2d) {
+        self.heading_anchors.clear();
         let tf = &mut self.text_flow;
         // Track state for nested formatting
         let mut list_stack: Vec<ListState> = Vec::new();
         let mut is_first_block = true;
+        let mut heading_state: Option<(String, f64)> = None;
+        let mut heading_slugs = HashMap::new();
         // Per-column alignments for the current table, and the current cell's
         // column index within its row. Both are reset when a new table starts.
         let mut table_alignments: Vec<Alignment> = Vec::new();
@@ -298,8 +344,13 @@ impl Markdown {
                     };
                     tf.push_size_abs_scale(scale);
                     tf.bold.push();
+                    heading_state = Some((String::new(), cx.turtle().pos().y));
                 }
                 MdEvent::End(TagEnd::Heading(_level)) => {
+                    if let Some((text, y)) = heading_state.take() {
+                        let slug = heading_slug(&text, &mut heading_slugs);
+                        self.heading_anchors.push((slug, y));
+                    }
                     tf.bold.pop();
                     tf.font_sizes.pop();
                     tf.new_line_collapsed(cx);
@@ -451,6 +502,9 @@ impl Markdown {
                 }
                 // Inline code
                 MdEvent::Code(text) => {
+                    if let Some((heading_text, _)) = heading_state.as_mut() {
+                        heading_text.push_str(&text);
+                    }
                     tf.push_size_rel_scale(tf.fixed_font_size_scale);
                     tf.fixed.push();
                     tf.inline_code.push();
@@ -501,6 +555,9 @@ impl Markdown {
                     }
                 }
                 MdEvent::Text(text) => {
+                    if let Some((heading_text, _)) = heading_state.as_mut() {
+                        heading_text.push_str(&text);
+                    }
                     if self.in_splash_block {
                         self.splash_block_string.push_str(&text);
                     } else if self.in_code_block {
@@ -510,6 +567,9 @@ impl Markdown {
                     }
                 }
                 MdEvent::SoftBreak => {
+                    if let Some((heading_text, _)) = heading_state.as_mut() {
+                        heading_text.push(' ');
+                    }
                     if self.in_splash_block {
                         self.splash_block_string.push('\n');
                     } else if self.in_code_block {
@@ -519,6 +579,9 @@ impl Markdown {
                     }
                 }
                 MdEvent::HardBreak => {
+                    if let Some((heading_text, _)) = heading_state.as_mut() {
+                        heading_text.push(' ');
+                    }
                     if self.in_splash_block {
                         self.splash_block_string.push('\n');
                     } else if self.in_code_block {
@@ -625,6 +688,19 @@ fn alignment_to_x(alignment: &Alignment) -> f64 {
 }
 
 impl MarkdownRef {
+    pub fn scroll_to_fragment(&self, cx: &mut Cx, fragment: &str) -> bool {
+        let Some(mut inner) = self.borrow_mut() else {
+            return false;
+        };
+        let Some(y) = inner.fragment_y(fragment) else {
+            return false;
+        };
+        let x = inner.scroll_bars.get_scroll_pos().x;
+        inner.scroll_bars.set_scroll_pos(cx, dvec2(x, y));
+        inner.redraw(cx);
+        true
+    }
+
     pub fn set_text(&mut self, cx: &mut Cx, v: &str) {
         let Some(mut inner) = self.borrow_mut() else {
             return;
@@ -724,4 +800,57 @@ pub enum MarkdownAction {
     #[default]
     None,
     LinkNavigated(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn github_heading_slugs_are_stable_and_suffix_duplicates() {
+        let mut prior = HashMap::new();
+        assert_eq!(
+            heading_slug("Customer Overview!", &mut prior),
+            "customer-overview"
+        );
+        assert_eq!(
+            heading_slug("Customer   Overview", &mut prior),
+            "customer-overview-1"
+        );
+        assert_eq!(heading_slug("API: `create()`", &mut prior), "api-create");
+    }
+
+    #[test]
+    fn fragment_lookup_uses_the_recorded_slug() {
+        let anchors = vec![
+            ("overview".into(), 12.0),
+            ("overview-1".into(), 84.0),
+        ];
+        assert_eq!(fragment_scroll_y(&anchors, "overview-1"), Some(84.0));
+        assert_eq!(fragment_scroll_y(&anchors, "missing"), None);
+    }
+
+    #[test]
+    fn fragment_scroll_finds_anchor_and_missing_anchor_is_harmless() {
+        let anchors = vec![("intro".into(), 0.0), ("details".into(), 140.0)];
+        assert_eq!(fragment_scroll_y(&anchors, "details"), Some(140.0));
+        assert_eq!(fragment_scroll_y(&anchors, "unknown"), None);
+    }
+
+    #[test]
+    fn markdown_link_action_preserves_the_original_href() {
+        let action = MarkdownAction::LinkNavigated("../customer.md#orders".into());
+        assert!(matches!(
+            action,
+            MarkdownAction::LinkNavigated(href) if href == "../customer.md#orders"
+        ));
+    }
+
+    #[test]
+    fn fragment_scroll_on_an_empty_markdown_ref_is_harmless() {
+        let markdown = WidgetRef::empty().as_markdown();
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        assert!(!markdown.scroll_to_fragment(&mut cx, "missing"));
+    }
 }
