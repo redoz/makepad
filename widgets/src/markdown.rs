@@ -709,6 +709,22 @@ fn alignment_to_x(alignment: &Alignment) -> f64 {
 }
 
 impl MarkdownRef {
+    pub fn scroll_y(&self) -> f64 {
+        self.borrow()
+            .map(|inner| inner.scroll_bars.get_scroll_pos().y)
+            .unwrap_or(0.0)
+    }
+
+    pub fn set_scroll_y(&self, cx: &mut Cx, y: f64) {
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
+        let y = if y.is_finite() { y.max(0.0) } else { 0.0 };
+        let x = inner.scroll_bars.get_scroll_pos().x;
+        inner.scroll_bars.set_scroll_pos(cx, dvec2(x, y));
+        inner.redraw(cx);
+    }
+
     pub fn scroll_to_fragment(&self, cx: &mut Cx, fragment: &str) -> bool {
         let Some(mut inner) = self.borrow_mut() else {
             return false;
@@ -968,6 +984,43 @@ mod tests {
                     .get_scroll_pos()
                     .y;
                 assert!((second_scroll_y - first_scroll_y).abs() < 0.001);
+            });
+        });
+    }
+
+    #[test]
+    fn markdown_ref_round_trips_vertical_scroll_state() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.with_vm(|vm| {
+            crate::script_mod(vm);
+            let mut inner = Markdown::script_new_with_default(vm);
+            inner.body.set(
+                "# Intro\n\n\
+                 Paragraph one.\n\n\
+                 Paragraph two.\n\n\
+                 Paragraph three.\n\n\
+                 Paragraph four.\n\n\
+                 Paragraph five.\n\n\
+                 # Details\n",
+            );
+            let markdown = WidgetRef::new_with_inner(Box::new(inner));
+
+            vm.with_cx_mut(|cx| {
+                let pass = DrawPass::new_with_name(cx, "markdown_scroll_state_test");
+                pass.set_size(cx, dvec2(240.0, 80.0));
+                let mut draw_list = DrawList2d::new(cx);
+                let draw_event = DrawEvent {
+                    redraw_all: true,
+                    ..Default::default()
+                };
+                draw_markdown_headless(cx, &draw_event, &pass, &mut draw_list, &markdown);
+
+                let markdown_ref = markdown.as_markdown();
+                markdown_ref.set_scroll_y(cx, 24.0);
+                assert!((markdown_ref.scroll_y() - 24.0).abs() < 0.001);
+
+                markdown_ref.set_scroll_y(cx, f64::NAN);
+                assert_eq!(markdown_ref.scroll_y(), 0.0);
             });
         });
     }
