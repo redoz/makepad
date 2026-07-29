@@ -6,7 +6,7 @@ use crate::{
 use pulldown_cmark::{
     Alignment, CodeBlockKind, Event as MdEvent, HeadingLevel, Options, Parser, Tag, TagEnd,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 script_mod! {
     use mod.prelude.widgets_internal.*
@@ -204,7 +204,11 @@ struct ListState {
     start_number: Option<u64>,
 }
 
-fn heading_slug(text: &str, prior: &mut HashMap<String, usize>) -> String {
+fn heading_slug(
+    text: &str,
+    prior: &mut HashMap<String, usize>,
+    emitted: &mut HashSet<String>,
+) -> String {
     let mut slug = String::new();
     let mut pending_dash = false;
     for ch in text.chars().flat_map(char::to_lowercase) {
@@ -218,14 +222,18 @@ fn heading_slug(text: &str, prior: &mut HashMap<String, usize>) -> String {
             pending_dash = true;
         }
     }
-    let count = prior.entry(slug.clone()).or_insert(0);
-    let resolved = if *count == 0 {
-        slug
-    } else {
-        format!("{slug}-{count}")
-    };
-    *count += 1;
-    resolved
+    let suffix = prior.entry(slug.clone()).or_insert(0);
+    loop {
+        let candidate = if *suffix == 0 {
+            slug.clone()
+        } else {
+            format!("{slug}-{suffix}")
+        };
+        *suffix += 1;
+        if emitted.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
 }
 
 fn fragment_scroll_y(anchors: &[(String, f64)], fragment: &str) -> Option<f64> {
@@ -322,6 +330,7 @@ impl Markdown {
         let mut is_first_block = true;
         let mut heading_state: Option<(String, f64)> = None;
         let mut heading_slugs = HashMap::new();
+        let mut emitted_heading_slugs = HashSet::new();
         // Per-column alignments for the current table, and the current cell's
         // column index within its row. Both are reset when a new table starts.
         let mut table_alignments: Vec<Alignment> = Vec::new();
@@ -356,7 +365,11 @@ impl Markdown {
                 }
                 MdEvent::End(TagEnd::Heading(_level)) => {
                     if let Some((text, y)) = heading_state.take() {
-                        let slug = heading_slug(&text, &mut heading_slugs);
+                        let slug = heading_slug(
+                            &text,
+                            &mut heading_slugs,
+                            &mut emitted_heading_slugs,
+                        );
                         self.heading_anchors.push((slug, y));
                     }
                     tf.bold.pop();
@@ -816,20 +829,36 @@ pub enum MarkdownAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     #[test]
     fn github_heading_slugs_are_stable_and_suffix_duplicates() {
         let mut prior = HashMap::new();
+        let mut emitted = HashSet::new();
         assert_eq!(
-            heading_slug("Customer Overview!", &mut prior),
+            heading_slug("Customer Overview!", &mut prior, &mut emitted),
             "customer-overview"
         );
         assert_eq!(
-            heading_slug("Customer   Overview", &mut prior),
+            heading_slug("Customer   Overview", &mut prior, &mut emitted),
             "customer-overview-1"
         );
-        assert_eq!(heading_slug("API: `create()`", &mut prior), "api-create");
+        assert_eq!(
+            heading_slug("API: `create()`", &mut prior, &mut emitted),
+            "api-create"
+        );
+    }
+
+    #[test]
+    fn heading_slugs_skip_natural_suffix_collisions() {
+        let mut prior = HashMap::new();
+        let mut emitted = HashSet::new();
+        assert_eq!(heading_slug("Foo", &mut prior, &mut emitted), "foo");
+        assert_eq!(
+            heading_slug("Foo-1", &mut prior, &mut emitted),
+            "foo-1"
+        );
+        assert_eq!(heading_slug("Foo", &mut prior, &mut emitted), "foo-2");
     }
 
     #[test]
@@ -865,19 +894,84 @@ mod tests {
         assert!(!markdown.scroll_to_fragment(&mut cx, "missing"));
     }
 
+    fn draw_markdown_headless(
+        cx: &mut Cx,
+        draw_event: &DrawEvent,
+        pass: &DrawPass,
+        draw_list: &mut DrawList2d,
+        markdown: &WidgetRef,
+    ) {
+        let mut cx_draw = CxDraw::new(cx, draw_event);
+        let mut cx_2d = Cx2d::new(&mut cx_draw);
+        cx_2d.begin_pass(pass, None);
+        draw_list.begin_always(&mut cx_2d);
+        let size = cx_2d.current_pass_size();
+        cx_2d.begin_root_turtle(size, Layout::flow_down());
+        markdown.draw_walk_all(&mut cx_2d, &mut Scope::empty(), Walk::fill());
+        cx_2d.end_pass_sized_turtle();
+        draw_list.end(&mut cx_2d);
+        cx_2d.end_pass(pass);
+    }
+
     #[test]
-    fn heading_anchor_stays_stable_after_scrolled_redraw() {
-        let first_y = content_local_heading_y(620.0, 0.0, 120.0);
-        let first_anchors = vec![("details".into(), first_y)];
-        let scroll_y = fragment_scroll_y(&first_anchors, "details").unwrap();
+    fn heading_anchor_stays_stable_after_real_scrolled_redraw() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.with_vm(|vm| {
+            crate::script_mod(vm);
+            let mut inner = Markdown::script_new_with_default(vm);
+            inner.body.set(
+                "# Intro\n\n\
+                 Paragraph one.\n\n\
+                 Paragraph two.\n\n\
+                 Paragraph three.\n\n\
+                 Paragraph four.\n\n\
+                 Paragraph five.\n\n\
+                 # Details\n",
+            );
+            let markdown = WidgetRef::new_with_inner(Box::new(inner));
 
-        let redrawn_y = content_local_heading_y(120.0, scroll_y, 120.0);
-        let redrawn_anchors = vec![("details".into(), redrawn_y)];
+            vm.with_cx_mut(|cx| {
+                let pass = DrawPass::new_with_name(cx, "markdown_anchor_stability_test");
+                pass.set_size(cx, dvec2(240.0, 80.0));
+                let mut draw_list = DrawList2d::new(cx);
+                let draw_event = DrawEvent {
+                    redraw_all: true,
+                    ..Default::default()
+                };
 
-        assert_eq!(scroll_y, 500.0);
-        assert_eq!(
-            fragment_scroll_y(&redrawn_anchors, "details"),
-            Some(500.0)
-        );
+                draw_markdown_headless(cx, &draw_event, &pass, &mut draw_list, &markdown);
+                let first_y = markdown
+                    .borrow::<Markdown>()
+                    .and_then(|inner| inner.fragment_y("details"))
+                    .expect("first draw should record the details anchor");
+                assert!(first_y > 0.0);
+
+                let markdown_ref = markdown.clone().as_markdown();
+                assert!(markdown_ref.scroll_to_fragment(cx, "details"));
+                let first_scroll_y = markdown
+                    .borrow::<Markdown>()
+                    .expect("markdown should remain borrowable")
+                    .scroll_bars
+                    .get_scroll_pos()
+                    .y;
+                assert!(first_scroll_y > 0.0);
+
+                draw_markdown_headless(cx, &draw_event, &pass, &mut draw_list, &markdown);
+                let redrawn_y = markdown
+                    .borrow::<Markdown>()
+                    .and_then(|inner| inner.fragment_y("details"))
+                    .expect("redraw should preserve the details anchor");
+                assert!((redrawn_y - first_y).abs() < 0.001);
+
+                assert!(markdown_ref.scroll_to_fragment(cx, "details"));
+                let second_scroll_y = markdown
+                    .borrow::<Markdown>()
+                    .expect("markdown should remain borrowable")
+                    .scroll_bars
+                    .get_scroll_pos()
+                    .y;
+                assert!((second_scroll_y - first_scroll_y).abs() < 0.001);
+            });
+        });
     }
 }
