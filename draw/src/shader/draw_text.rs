@@ -11,7 +11,8 @@ use {
             fonts::Fonts,
             geom::{Point, Rect as TextRect, Size, Transform},
             layouter::{
-                BorrowedLayoutParams, LaidoutGlyph, LaidoutRow, LaidoutText, LayoutOptions, Style,
+                BorrowedLayoutParams, LaidoutGlyph, LaidoutRow, LaidoutText, LayoutCacheStats,
+                LayoutOptions, Style,
             },
             loader::{FontDefinition, FontFamilyDefinition},
             rasterizer::{AtlasKind, RasterizedGlyph},
@@ -1637,6 +1638,39 @@ fn slug_maybe_prewarm_helper(cx: &mut Cx2d) -> bool {
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 impl DrawText {
+    fn layout_params<'a>(
+        &self,
+        first_row_indent_in_lpxs: f32,
+        first_row_min_line_spacing_below_in_lpxs: f32,
+        max_width_in_lpxs: Option<f32>,
+        wrap: bool,
+        align: Align,
+        text: &'a str,
+    ) -> BorrowedLayoutParams<'a> {
+        BorrowedLayoutParams {
+            text,
+            style: Style {
+                font_family_id: self.text_style.font_family.to_font_family_id(),
+                font_size_in_pts: self.text_style.font_size,
+                color: None,
+            },
+            options: LayoutOptions {
+                first_row_indent_in_lpxs,
+                first_row_min_line_spacing_below_in_lpxs,
+                max_width_in_lpxs,
+                wrap,
+                align: align.x as f32,
+                line_spacing_scale: self.text_style.line_spacing,
+                max_rows: if self.max_lines > 0 {
+                    Some(self.max_lines)
+                } else {
+                    None
+                },
+                ellipsis: self.text_overflow == TextOverflow::Ellipsis,
+            },
+        }
+    }
+
     fn slug_run_is_ready(&mut self, cx: &mut Cx2d, text: &LaidoutText) -> bool {
         let dpi_factor = cx.current_dpi_factor() as f32;
         let redraw_id = cx.cx.redraw_id;
@@ -2530,29 +2564,46 @@ impl DrawText {
         self.text_style.font_family.ensure_fonts_loaded(cx);
         let fonts = cx.get_global::<Rc<RefCell<Fonts>>>().clone();
         let mut fonts = fonts.borrow_mut();
-
-        fonts.get_or_layout(BorrowedLayoutParams {
+        fonts.get_or_layout(self.layout_params(
+            first_row_indent_in_lpxs,
+            first_row_min_line_spacing_below_in_lpxs,
+            max_width_in_lpxs,
+            wrap,
+            align,
             text,
-            style: Style {
-                font_family_id: self.text_style.font_family.to_font_family_id(),
-                font_size_in_pts: self.text_style.font_size,
-                color: None,
-            },
-            options: LayoutOptions {
-                first_row_indent_in_lpxs,
-                first_row_min_line_spacing_below_in_lpxs,
-                max_width_in_lpxs,
-                wrap,
-                align: align.x as f32,
-                line_spacing_scale: self.text_style.line_spacing,
-                max_rows: if self.max_lines > 0 {
-                    Some(self.max_lines)
-                } else {
-                    None
-                },
-                ellipsis: self.text_overflow == TextOverflow::Ellipsis,
-            },
-        })
+        ))
+    }
+
+    /// Lays out text without reading or updating the retained layout cache.
+    pub fn layout_uncached(
+        &self,
+        cx: &mut Cx,
+        first_row_indent_in_lpxs: f32,
+        first_row_min_line_spacing_below_in_lpxs: f32,
+        max_width_in_lpxs: Option<f32>,
+        wrap: bool,
+        align: Align,
+        text: &str,
+    ) -> LaidoutText {
+        self.text_style.font_family.ensure_fonts_loaded(cx);
+        let fonts = cx.get_global::<Rc<RefCell<Fonts>>>().clone();
+        let mut fonts = fonts.borrow_mut();
+        fonts.layout_uncached(self.layout_params(
+            first_row_indent_in_lpxs,
+            first_row_min_line_spacing_below_in_lpxs,
+            max_width_in_lpxs,
+            wrap,
+            align,
+            text,
+        ))
+    }
+
+    /// Returns retained layout-cache accounting without changing cache state.
+    pub fn layout_cache_stats(&self, cx: &mut Cx) -> LayoutCacheStats {
+        self.text_style.font_family.ensure_fonts_loaded(cx);
+        let fonts = cx.get_global::<Rc<RefCell<Fonts>>>().clone();
+        let stats = fonts.borrow().layout_cache_stats();
+        stats
     }
 
     fn draw_text(&mut self, cx: &mut Cx2d, origin_in_lpxs: Point<f32>, text: &LaidoutText) {

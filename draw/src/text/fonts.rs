@@ -3,7 +3,7 @@ use {
         font::{Font, FontId, GlyphId},
         font_family::{FontFamily, FontFamilyId},
         image::{Bgra, Image},
-        layouter::{self, LaidoutText, LayoutParams, Layouter},
+        layouter::{self, LaidoutText, LayoutCacheStats, LayoutParams, Layouter},
         loader::{FontDefinition, FontFamilyDefinition},
         msdfer::Msdfer,
         rasterizer::{CompletedMsdfJob, OutlineRasterizationMode, QueuedMsdfJob, Rasterizer},
@@ -230,6 +230,14 @@ impl Fonts {
 
     pub fn get_or_layout(&mut self, params: impl LayoutParams) -> Rc<LaidoutText> {
         self.layouter.get_or_layout(params)
+    }
+
+    pub fn layout_uncached(&mut self, params: impl LayoutParams) -> LaidoutText {
+        self.layouter.layout_uncached(params)
+    }
+
+    pub fn layout_cache_stats(&self) -> LayoutCacheStats {
+        self.layouter.layout_cache_stats()
     }
 
     pub fn prepare_textures(&mut self, cx: &mut Cx) -> bool {

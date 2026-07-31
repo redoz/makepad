@@ -39,6 +39,12 @@ const PTS_PER_INCH: f32 = 72.0;
 /// so the true footprint can exceed this only briefly and only by the visible set.
 pub const LAYOUT_CACHE_MAX_BYTES: usize = 16 * 1024 * 1024;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct LayoutCacheStats {
+    pub entries: usize,
+    pub bytes: usize,
+}
+
 /// A layout cache entry, tracked with its estimated size, its position in the
 /// least-recently-used order (the tick under which it is registered in
 /// `Layouter::cache_lru_order`), and the frame generation it was last used in.
@@ -148,6 +154,19 @@ impl Layouter {
         let result = Rc::new(self.layout(params));
         self.insert_cached_result(cache_key, result.clone());
         result
+    }
+
+    /// Lays out text without reading or updating the retained layout cache.
+    pub fn layout_uncached(&mut self, params: impl LayoutParams) -> LaidoutText {
+        self.layout(params.to_owned())
+    }
+
+    /// Returns retained layout-cache accounting without changing cache state.
+    pub fn layout_cache_stats(&self) -> LayoutCacheStats {
+        LayoutCacheStats {
+            entries: self.cached_results.len(),
+            bytes: self.cache_bytes,
+        }
     }
 
     fn insert_cached_result(&mut self, cache_key: OwnedLayoutParams, result: Rc<LaidoutText>) {
@@ -1323,8 +1342,9 @@ impl LaidoutGlyph {
 #[cfg(test)]
 mod tests {
     use super::{
-        merge_segments_for_line_breaking, parse_text_atlas_size_value, LaidoutText, LayoutOptions,
-        Layouter, OwnedLayoutParams, Settings, Size, Style, LAYOUT_CACHE_MAX_BYTES,
+        merge_segments_for_line_breaking, parse_text_atlas_size_value, FontFamilyDefinition,
+        LaidoutText, LayoutCacheStats, LayoutOptions, Layouter, OwnedLayoutParams, Settings, Size,
+        Style, LAYOUT_CACHE_MAX_BYTES,
     };
     use std::rc::Rc;
     use unicode_segmentation::UnicodeSegmentation;
@@ -1439,6 +1459,59 @@ mod tests {
             rows: Vec::new(),
             is_truncated: false,
         })
+    }
+
+    fn empty_test_family() -> FontFamilyDefinition {
+        FontFamilyDefinition {
+            font_ids: Vec::new(),
+            expected_member_count: 0,
+        }
+    }
+
+    #[test]
+    fn uncached_layout_does_not_touch_retained_cache_state() {
+        let mut layouter = Layouter::new(Settings::default());
+        layouter.define_font_family(0u64.into(), empty_test_family());
+        let retained = cache_test_params("retained");
+        layouter.insert_cached_result(retained.clone(), cache_test_result("retained"));
+        let before_stats = layouter.layout_cache_stats();
+        let before_lru = layouter.cache_lru_order.clone();
+
+        let _ = layouter.layout_uncached(cache_test_params(""));
+
+        assert_eq!(layouter.layout_cache_stats(), before_stats);
+        assert_eq!(layouter.cache_lru_order, before_lru);
+        assert!(layouter.cached_results.contains_key(&retained));
+    }
+
+    #[test]
+    fn layout_cache_stats_follow_insert_replace_and_clear() {
+        let mut layouter = Layouter::new(Settings::default());
+        assert_eq!(
+            layouter.layout_cache_stats(),
+            LayoutCacheStats {
+                entries: 0,
+                bytes: 0,
+            }
+        );
+
+        let params = cache_test_params("entry");
+        layouter.insert_cached_result(params.clone(), cache_test_result("entry"));
+        let inserted = layouter.layout_cache_stats();
+        assert_eq!(inserted.entries, 1);
+        assert!(inserted.bytes > 0);
+
+        layouter.insert_cached_result(params, cache_test_result("entry"));
+        assert_eq!(layouter.layout_cache_stats(), inserted);
+
+        layouter.set_font_family_definition(0u64.into(), empty_test_family());
+        assert_eq!(
+            layouter.layout_cache_stats(),
+            LayoutCacheStats {
+                entries: 0,
+                bytes: 0,
+            }
+        );
     }
 
     #[test]
