@@ -1,4 +1,5 @@
 use crate::makepad_shell::*;
+use makepad_micro_serde::{DeJson, DeJsonErr, DeJsonState};
 use makepad_toml_parser::{parse_toml, Toml};
 use std::{
     collections::HashMap,
@@ -248,19 +249,133 @@ pub fn get_crate_dir(build_crate: &str) -> Result<PathBuf, String> {
     }
 }
 
+/// The two fields of a `cargo metadata` package entry that locate a crate on
+/// disk. Parsed with `deserialize_json_lenient`, which is what lets the rest of
+/// the (very large) document be ignored -- the strict entry point rejects the
+/// first unknown key it meets.
+#[derive(DeJson)]
+struct CargoMetadataPackage {
+    name: String,
+    manifest_path: String,
+}
+
+#[derive(DeJson)]
+struct CargoMetadata {
+    packages: Vec<CargoMetadataPackage>,
+}
+
+/// Map every package cargo knows about to its crate directory, via
+/// `cargo metadata`. Unlike `cargo tree`, this reports a real filesystem path
+/// for *every* dependency kind -- path, registry and git alike -- because it
+/// prints the resolved `manifest_path` rather than the source the dependency
+/// was declared from.
+///
+/// Returns an empty map if cargo fails or the document doesn't parse; callers
+/// treat this as a fallback and keep whatever they already resolved.
+fn dep_dirs_from_cargo_metadata(target: &str) -> HashMap<String, PathBuf> {
+    let mut out = HashMap::new();
+    let cwd = std::env::current_dir().unwrap();
+    let filter_platform = format!("--filter-platform={target}");
+    let Ok(json) = shell_env_cap(
+        &[],
+        &cwd,
+        "cargo",
+        &["metadata", "--format-version", "1", &filter_platform],
+    ) else {
+        return out;
+    };
+    let Ok(metadata) = CargoMetadata::deserialize_json_lenient(&json) else {
+        return out;
+    };
+    for package in metadata.packages {
+        // manifest_path points at the Cargo.toml; the crate dir is its parent.
+        if let Some(dir) = Path::new(&package.manifest_path).parent() {
+            out.insert(package.name, dir.to_path_buf());
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod cargo_metadata_tests {
+    use super::*;
+
+    /// Trimmed from a real `cargo metadata --format-version 1
+    /// --filter-platform=wasm32-unknown-unknown` document for an app that
+    /// depends on makepad through git. Keys the parser must ignore are kept in
+    /// place deliberately, including a nested object and an array, since the
+    /// point of the test is that the tiny struct survives the full document.
+    const METADATA: &str = r#"{
+        "packages": [
+            {
+                "name": "makepad-platform",
+                "version": "2.0.0",
+                "id": "git+https://github.com/redoz/makepad.git?rev=c38f529#makepad-platform@2.0.0",
+                "dependencies": [{"name": "makepad-live-id", "req": "^2.0.0"}],
+                "targets": [{"kind": ["lib"], "name": "makepad-platform"}],
+                "manifest_path": "/home/runner/.cargo/git/checkouts/makepad-7ea7542d/c38f529/platform/Cargo.toml"
+            },
+            {
+                "name": "waml-editor",
+                "version": "0.1.0",
+                "manifest_path": "/home/runner/work/waml/waml/crates/waml-editor/Cargo.toml"
+            }
+        ],
+        "workspace_members": ["waml-editor@0.1.0"],
+        "resolve": null,
+        "version": 1
+    }"#;
+
+    #[test]
+    fn parses_name_and_manifest_path_ignoring_everything_else() {
+        let metadata = CargoMetadata::deserialize_json_lenient(METADATA).unwrap();
+        assert_eq!(metadata.packages.len(), 2);
+        assert_eq!(metadata.packages[0].name, "makepad-platform");
+        assert_eq!(
+            metadata.packages[0].manifest_path,
+            "/home/runner/.cargo/git/checkouts/makepad-7ea7542d/c38f529/platform/Cargo.toml"
+        );
+    }
+
+    /// The crate dir is the manifest's parent -- this is what the JS glue and
+    /// the `resources/` trees are copied out of.
+    #[test]
+    fn crate_dir_is_the_manifest_parent() {
+        let metadata = CargoMetadata::deserialize_json_lenient(METADATA).unwrap();
+        let dir = Path::new(&metadata.packages[0].manifest_path)
+            .parent()
+            .unwrap();
+        assert!(dir.ends_with("c38f529/platform"));
+    }
+
+    /// A git dependency is exactly the case `cargo tree` cannot resolve: it
+    /// prints the repository URL, and no token in the line is a directory.
+    #[test]
+    fn cargo_tree_cannot_resolve_a_git_dependency_line() {
+        let line = "├── makepad-widgets v2.0.0 (https://github.com/redoz/makepad.git?rev=c38f529#c38f5299)";
+        let (name, path) = extract_dependency_paths(line).unwrap();
+        assert_eq!(name, "makepad-widgets");
+        assert!(
+            path.is_none(),
+            "a git dependency must fall through to the metadata fallback"
+        );
+    }
+}
+
 pub fn get_crate_dep_dirs(
     build_crate: &str,
     build_dir: &Path,
     target: &str,
 ) -> HashMap<String, PathBuf> {
     let mut dependencies = HashMap::new();
+    let mut unresolved = Vec::new();
     let cwd = std::env::current_dir().unwrap();
-    let target = format!("--target={target}");
+    let target_flag = format!("--target={target}");
     if let Ok(cargo_tree_output) = shell_env_cap(
         &[],
         &cwd,
         "cargo",
-        &["tree", "--color", "never", "-p", build_crate, &target],
+        &["tree", "--color", "never", "-p", build_crate, &target_flag],
     ) {
         for line in cargo_tree_output.lines().skip(1) {
             if let Some((name, path)) = extract_dependency_paths(line) {
@@ -271,11 +386,34 @@ pub fn get_crate_dep_dirs(
                     let dir_file = build_dir.join(format!("{}.path", name));
                     if let Ok(path) = std::fs::read_to_string(&dir_file) {
                         dependencies.insert(name, Path::new(&path).into());
+                    } else {
+                        unresolved.push(name);
                     }
                 }
             }
         }
     }
+
+    // A git dependency resolves through neither path above: `cargo tree` prints
+    // the repository URL rather than a directory, and the `.path` marker is
+    // written by the dependency's own build script into the target dir, so it
+    // is absent whenever those build scripts were cached as fresh (CI restoring
+    // a warm target dir is the usual way to hit this).
+    //
+    // That mattered silently: callers copy the web JS glue and each crate's
+    // `resources/` tree out of these directories, and a dependency missing from
+    // this map is simply not copied -- no error, no non-zero exit, just an
+    // artifact with no runtime in it. Fall back to `cargo metadata`, which
+    // always reports a resolved on-disk path.
+    if !unresolved.is_empty() {
+        let from_metadata = dep_dirs_from_cargo_metadata(target);
+        for name in unresolved {
+            if let Some(dir) = from_metadata.get(&name) {
+                dependencies.insert(name, dir.clone());
+            }
+        }
+    }
+
     dependencies
 }
 
