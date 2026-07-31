@@ -270,22 +270,36 @@ struct CargoMetadata {
 /// prints the resolved `manifest_path` rather than the source the dependency
 /// was declared from.
 ///
-/// Returns an empty map if cargo fails or the document doesn't parse; callers
-/// treat this as a fallback and keep whatever they already resolved.
+/// Returns an empty map if cargo fails or the document doesn't parse, reporting
+/// why on stdout; callers treat this as a fallback and keep whatever they
+/// already resolved.
 fn dep_dirs_from_cargo_metadata(target: &str) -> HashMap<String, PathBuf> {
     let mut out = HashMap::new();
     let cwd = std::env::current_dir().unwrap();
     let filter_platform = format!("--filter-platform={target}");
-    let Ok(json) = shell_env_cap(
+    // `shell_env_cap` returns stdout and stderr concatenated, which appends
+    // cargo's warnings to the JSON document and breaks the parse -- and this
+    // workspace does emit them ("warning: skipping duplicate package ...").
+    // Use the splitting variant so the parser sees stdout alone.
+    let (json, stderr, success) = shell_env_cap_split(
         &[],
         &cwd,
         "cargo",
         &["metadata", "--format-version", "1", &filter_platform],
-    ) else {
+    );
+    if !success {
+        println!("cargo metadata failed while resolving dependency directories:\n{stderr}");
         return out;
-    };
-    let Ok(metadata) = CargoMetadata::deserialize_json_lenient(&json) else {
-        return out;
+    }
+    let metadata = match CargoMetadata::deserialize_json_lenient(&json) {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            // Say so rather than returning empty in silence: unresolved
+            // dependencies surface downstream only as files quietly absent
+            // from the built artifact.
+            println!("cargo metadata output did not parse while resolving dependency directories: {e:?}");
+            return out;
+        }
     };
     for package in metadata.packages {
         // manifest_path points at the Cargo.toml; the crate dir is its parent.
@@ -346,6 +360,26 @@ mod cargo_metadata_tests {
             .parent()
             .unwrap();
         assert!(dir.ends_with("c38f529/platform"));
+    }
+
+    /// The first attempt at this fix read the document through `shell_env_cap`,
+    /// which returns stdout and stderr concatenated. cargo emits warnings on
+    /// stderr for this very workspace ("skipping duplicate package ..."), so
+    /// the parser was handed JSON with prose glued to the end, failed, and the
+    /// fallback returned an empty map -- reproducing the silent bug it was
+    /// written to fix. The document is now read from stdout alone.
+    #[test]
+    fn trailing_cargo_warnings_would_break_the_parse() {
+        let polluted = format!(
+            "{METADATA}warning: skipping duplicate package `bitflags v2.10.0`:\n  /a/b/Cargo.toml\n"
+        );
+        assert!(
+            CargoMetadata::deserialize_json_lenient(&polluted).is_err(),
+            "if this ever starts passing, the parser tolerates trailing prose and \
+             dep_dirs_from_cargo_metadata may go back to the concatenating helper"
+        );
+        // ... and stdout on its own is fine, which is what the fix relies on.
+        assert!(CargoMetadata::deserialize_json_lenient(METADATA).is_ok());
     }
 
     /// A git dependency is exactly the case `cargo tree` cannot resolve: it
@@ -663,3 +697,4 @@ pub fn resolve_app_icon_env(build_crate: &str) -> Result<Option<AppIconEnv>, Str
         required_paths[3].to_string_lossy().to_string(),
     ]))
 }
+
