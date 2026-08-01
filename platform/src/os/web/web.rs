@@ -214,6 +214,13 @@ impl Cx {
 
                 live_id!(ToWasmAnimationFrame) => {
                     let tw = ToWasmAnimationFrame::read_to_wasm(&mut to_wasm);
+                    // Only clock on web (see CxOs::time_first_frame). Anchor on the
+                    // first frame so seconds_since_app_start starts near zero rather
+                    // than at however long the page has been open.
+                    if self.os.time_first_frame.is_none() {
+                        self.os.time_first_frame = Some(tw.time);
+                    }
+                    self.os.time_last_frame = tw.time;
                     is_animation_frame = Some(tw.time);
                     if self.new_next_frames.len() != 0 {
                         self.call_next_frame_event(tw.time);
@@ -1107,7 +1114,15 @@ impl CxOsApi for Cx {
     }
 
     fn seconds_since_app_start(&self) -> f64 {
-        0.0
+        // Advances once per animation frame, which is the only wall clock the
+        // main thread is handed (js_time_now is a worker-side import). That is
+        // enough for the animation drivers that call this: they are all sampled
+        // during a frame, and a value that is constant *within* a frame is
+        // correct anyway. Reads before the first frame return 0.0.
+        match self.os.time_first_frame {
+            Some(first) => (self.os.time_last_frame - first).max(0.0),
+            None => 0.0,
+        }
     }
 
     #[cfg(target_feature = "atomics")]
@@ -1255,6 +1270,14 @@ pub struct CxOs {
     /// touches. See `Cx::set_touch_emulates_mouse`.
     pub(crate) touch_emulates_mouse: bool,
     pub(crate) touch_emu: TouchMouseEmulator,
+
+    /// Timestamps of the first animation frame we saw and of the most recent
+    /// one. `ToWasmAnimationFrame::time` is a rAF timestamp in seconds, measured
+    /// from page navigation start rather than from app start, so the first frame
+    /// is the only anchor available. Both stay unset until that frame arrives;
+    /// see `seconds_since_app_start`.
+    pub(crate) time_first_frame: Option<f64>,
+    pub(crate) time_last_frame: f64,
 }
 
 impl Default for CxOs {
@@ -1275,6 +1298,9 @@ impl Default for CxOs {
 
             touch_emulates_mouse: false,
             touch_emu: TouchMouseEmulator::default(),
+
+            time_first_frame: None,
+            time_last_frame: 0.0,
         }
     }
 }
