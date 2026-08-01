@@ -35,7 +35,6 @@ export class WasmWebBrowser extends WasmBridge {
         this.signal_timeout = null;
         this.workers = [];
         this.thread_stack_size = 2 * 1024 * 1024;
-        this.buffer_upload_serial = 0;
         this.loader_removed = false;
         this.loader_seen_animation_frame = false;
         this.loader_quiet_animation_frames = 0;
@@ -1252,7 +1251,6 @@ export class WasmWebBrowser extends WasmBridge {
 
     do_wasm_pump() {
         let started = performance.now();
-        this.buffer_upload_serial += 1;
         let to_wasm = this.to_wasm;
         this.to_wasm = this.new_to_wasm();
         let from_wasm = this.wasm_process_msg(to_wasm);

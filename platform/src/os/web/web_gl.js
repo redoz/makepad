@@ -198,20 +198,36 @@ export class WasmWebGL extends WasmWebBrowser {
     if (!gl_buf || ptr_f32.ptr == 0 || ptr_f32.len == 0) {
       return;
     }
-    if (
-      gl_buf._last_upload_serial === this.buffer_upload_serial &&
-      gl_buf._last_upload_ptr === ptr_f32.ptr &&
-      gl_buf._last_upload_len === ptr_f32.len &&
-      gl_buf._last_upload_memory === this.memory.buffer
-    ) {
-      return;
-    }
     let data = new Float32Array(this.memory.buffer, ptr_f32.ptr, ptr_f32.len);
+    // Skip only when the CONTENTS are unchanged. `_last_upload_copy` mirrors what this
+    // buffer currently holds on the GPU, and this is the only writer of these blocks, so
+    // the mirror stays coherent no matter which shader/pass/pointer sourced the data.
+    // The compare is bitwise (Uint32 view) rather than float: `NaN !== NaN` would defeat
+    // the skip entirely for blocks holding a NaN, and `-0 === 0` would wrongly skip an
+    // upload that flips a sign bit the shader can observe.
+    let bits = new Uint32Array(this.memory.buffer, ptr_f32.ptr, ptr_f32.len);
+    let last = gl_buf._last_upload_copy;
+    if (last !== undefined && last.length === bits.length) {
+      let same = true;
+      for (let i = 0; i < bits.length; i++) {
+        if (last[i] !== bits[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) {
+        return;
+      }
+    }
     this.upload_uniform_buffer_data(gl, gl_buf, data, gl.DYNAMIC_DRAW);
-    gl_buf._last_upload_serial = this.buffer_upload_serial;
-    gl_buf._last_upload_ptr = ptr_f32.ptr;
-    gl_buf._last_upload_len = ptr_f32.len;
-    gl_buf._last_upload_memory = this.memory.buffer;
+    // Mirror updated only AFTER the upload returns. If the upload throws, committing first
+    // would poison the mirror permanently: contents would match, so every later upload is
+    // skipped and the buffer stays stale for the life of this gl_buf.
+    if (last !== undefined && last.length === bits.length) {
+      last.set(bits);
+    } else {
+      gl_buf._last_upload_copy = new Uint32Array(bits);
+    }
   }
 
   upload_uniform_buffer_data(gl, gl_buf, data, usage = gl.DYNAMIC_DRAW) {
