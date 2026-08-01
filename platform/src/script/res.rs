@@ -429,41 +429,31 @@ impl Cx {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_wasm_widgets_resources_path, normalize_path_str, remapped_small_font_dependency_path,
-        should_skip_eager_resource_load, wasm_crate_resource_identity, wasm_resource_crate_name,
-        web_resource_base_path, WASM_FILE_RESOURCE_ERROR,
+        is_wasm_widgets_resources_path, normalize_dependency_file_path,
+        remapped_small_font_dependency_path, should_skip_eager_resource_load,
+        wasm_crate_resource_identity, wasm_resource_crate_name, web_resource_base_path,
+        WASM_FILE_RESOURCE_ERROR,
     };
 
     #[test]
-    fn normalizes_windows_manifest_paths_to_forward_slashes() {
-        // A `\`-spelled manifest dir and its `/`-spelled abs path have to come
-        // out comparable, or crate resources never resolve in a wasm binary
-        // built on Windows.
+    fn normalizes_windows_separators_to_forward_slashes() {
+        // `std::path` on wasm is POSIX, so a backslash is an ordinary character
+        // there. A Windows build host bakes `\`-spelled paths into the binary,
+        // and those have to come out `/`-spelled or no crate resource resolves
+        // to a web_url in a wasm build produced on Windows.
         assert_eq!(
-            normalize_path_str(r"C:\dev\makepad\widgets").as_deref(),
-            Some("C:/dev/makepad/widgets")
-        );
-        assert_eq!(
-            normalize_path_str("C:/dev/makepad/widgets/resources/IBMPlexSans-Text.ttf").as_deref(),
-            Some("C:/dev/makepad/widgets/resources/IBMPlexSans-Text.ttf")
+            normalize_dependency_file_path(r"widgets\resources\IBMPlexSans-Text.ttf").as_deref(),
+            Some("widgets/resources/IBMPlexSans-Text.ttf")
         );
     }
 
     #[test]
     fn resolves_parent_segments_across_mixed_separators() {
         assert_eq!(
-            normalize_path_str(r"C:\dev\makepad\draw/../../widgets/resources/x.ttf").as_deref(),
-            Some("C:/dev/widgets/resources/x.ttf")
+            normalize_dependency_file_path(r"draw\..\widgets/resources/x.ttf").as_deref(),
+            Some("widgets/resources/x.ttf")
         );
-        assert_eq!(normalize_path_str("a/b/../.././..").as_deref(), None);
-    }
-
-    #[test]
-    fn preserves_posix_root() {
-        assert_eq!(
-            normalize_path_str("/home/runner/work/./waml/../waml/widgets").as_deref(),
-            Some("/home/runner/work/waml/widgets")
-        );
+        assert_eq!(normalize_dependency_file_path("a/b/../.././..").as_deref(), None);
     }
 
     #[test]
@@ -670,45 +660,6 @@ fn normalize_dependency_file_path(path: &str) -> Option<String> {
         }
     }
     Some(stack.join("/"))
-}
-
-/// Resolve `.` / `..` in a path that may use either separator, always
-/// producing `/`-separated output.
-///
-/// `std::path` on wasm is POSIX, so a backslash is an ordinary character
-/// there. A Windows build host bakes `\`-separated `CARGO_MANIFEST_DIR`
-/// strings into the binary, and those collapse to a single path component
-/// once they reach wasm — every `strip_prefix` against a `/`-separated
-/// absolute path then fails and no crate resource ever resolves to a
-/// web_url. Splitting on both separators ourselves keeps the two spellings
-/// comparable regardless of which OS built the wasm.
-#[cfg(any(target_arch = "wasm32", test))]
-fn normalize_path_str(path: &str) -> Option<String> {
-    let normalized = path.replace('\\', "/");
-    let rooted = normalized.starts_with('/');
-    let mut stack: Vec<&str> = Vec::new();
-    for part in normalized.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                if stack.pop().is_none() {
-                    return None;
-                }
-            }
-            other => stack.push(other),
-        }
-    }
-    let joined = stack.join("/");
-    Some(if rooted {
-        format!("/{}", joined)
-    } else {
-        joined
-    })
-}
-
-#[cfg(target_arch = "wasm32")]
-fn normalize_path(path: &Path) -> Option<PathBuf> {
-    normalize_path_str(&path.to_string_lossy()).map(PathBuf::from)
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
