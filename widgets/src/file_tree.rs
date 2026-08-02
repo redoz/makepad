@@ -863,6 +863,16 @@ impl FileTree {
         }
     }
 
+    /// The folder's animated open amount: 0.0 fully closed, 1.0 fully open, and
+    /// the in-between values while the fold animation runs. Exposed so a host
+    /// drawing its own fold affordance (a chevron, a twisty) can rotate it in
+    /// step with the rows rather than running a second, drifting timer.
+    pub fn folder_opened(&self, file_node_id: LiveId) -> f32 {
+        self.tree_nodes
+            .get(&file_node_id)
+            .map_or(0.0, |node| node.opened)
+    }
+
     pub fn set_folder_is_open(
         &mut self,
         cx: &mut Cx,
