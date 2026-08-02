@@ -164,6 +164,11 @@ pub trait CxOsApi {
 
     fn browser_history_go(&mut self, _delta: i32) {}
 
+    /// Deliver `bytes` to the user as a downloaded file. Only the browser
+    /// backend can do this; every other platform ignores the request and must
+    /// use its own save dialog.
+    fn download_file(&mut self, _name: &str, _bytes: Vec<u8>, _mime_type: &str) {}
+
     fn seconds_since_app_start(&self) -> f64;
 
     fn default_window_size(&self) -> Vec2d {
@@ -870,6 +875,20 @@ impl Cx {
 
     pub fn browser_history_go(&mut self, delta: i32) {
         <Self as CxOsApi>::browser_history_go(self, delta);
+    }
+
+    /// Offer `bytes` to the user as a file download named `name`.
+    ///
+    /// `name` is a filename, never a path: any directory component is dropped
+    /// so a caller cannot steer the write outside the browser's download
+    /// directory. On platforms without a download concept this does nothing.
+    pub fn download_file(&mut self, name: &str, bytes: Vec<u8>, mime_type: &str) {
+        let name = name
+            .rsplit(['/', '\\'])
+            .next()
+            .filter(|name| !name.is_empty() && *name != "." && *name != "..")
+            .unwrap_or("download");
+        <Self as CxOsApi>::download_file(self, name, bytes, mime_type);
     }
 
     pub fn system_browser(&mut self, id: impl Into<SystemBrowserId>) -> CxSystemBrowser<'_> {

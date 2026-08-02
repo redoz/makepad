@@ -274,6 +274,23 @@ export class WasmWebBrowser extends WasmBridge {
         }
     }
 
+    FromWasmDownloadFile(args) {
+        const blob = new Blob([args.data], { type: args.mime_type });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = args.name;
+        link.style.display = "none";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        // The click only queues the download: revoking the url in the same task
+        // can cancel it, so release it once the current task has finished.
+        queueMicrotask(() => {
+            URL.revokeObjectURL(url);
+        });
+    }
+
     FromWasmBrowserUpdateUrl(args) {
         const next = new URL(args.url || "", window.location.href);
         const nextHref = next.pathname + next.search + next.hash;

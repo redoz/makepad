@@ -1092,6 +1092,7 @@ impl CxOsApi for Cx {
             FromWasmSetDefaultDepthAndBlendMode::to_js_code(),
             FromWasmDrawCall::to_js_code(),
             FromWasmOpenUrl::to_js_code(),
+            FromWasmDownloadFile::to_js_code(),
             FromWasmBrowserUpdateUrl::to_js_code(),
             FromWasmBrowserHistoryGo::to_js_code(),
             FromWasmUseMidiInputs::to_js_code(),
@@ -1154,6 +1155,14 @@ impl CxOsApi for Cx {
             } else {
                 false
             },
+        });
+    }
+
+    fn download_file(&mut self, name: &str, bytes: Vec<u8>, mime_type: &str) {
+        self.os.from_wasm(FromWasmDownloadFile {
+            name: name.to_string(),
+            mime_type: mime_type.to_string(),
+            data: WasmDataU8::from_vec_u8(bytes),
         });
     }
 

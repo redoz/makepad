@@ -90,6 +90,13 @@ pub struct FromWasmOpenUrl {
 }
 
 #[derive(FromWasm)]
+pub struct FromWasmDownloadFile {
+    pub name: String,
+    pub mime_type: String,
+    pub data: WasmDataU8,
+}
+
+#[derive(FromWasm)]
 pub struct FromWasmBrowserUpdateUrl {
     pub url: String,
     pub replace: bool,
