@@ -7,8 +7,8 @@ export class WasmWebGL extends WasmWebBrowser {
       return;
     }
     this.draw_shaders = [];
-    // Programs whose link has been issued but not yet queried. Drained by
-    // FromWasmFinishWebGLShaders once per compile batch.
+    // Programs whose shader compiles and link have been issued but not yet
+    // queried. Drained by FromWasmFinishWebGLShaders once per compile batch.
     this.pending_shaders = [];
     this.array_buffers = [];
     this.index_buffers = [];
@@ -292,34 +292,20 @@ export class WasmWebGL extends WasmWebBrowser {
 
     gl.shaderSource(vsh, args.vertex);
     gl.compileShader(vsh);
-    if (!gl.getShaderParameter(vsh, gl.COMPILE_STATUS)) {
-      let message =
-        "webgl.compile_fail.vertex " +
-        args.shader_id +
-        " " +
-        gl.getShaderInfoLog(vsh);
-      console.error(message);
-      gl.deleteShader(vsh);
-      this.draw_shaders[args.shader_id] = { compile_failed: true };
-      return;
-    }
 
     // compile pixelshader
     var fsh = gl.createShader(gl.FRAGMENT_SHADER);
     gl.shaderSource(fsh, args.pixel);
     gl.compileShader(fsh);
-    if (!gl.getShaderParameter(fsh, gl.COMPILE_STATUS)) {
-      let message =
-        "webgl.compile_fail.fragment " +
-        args.shader_id +
-        " " +
-        gl.getShaderInfoLog(fsh);
-      console.error(message);
-      gl.deleteShader(vsh);
-      gl.deleteShader(fsh);
-      this.draw_shaders[args.shader_id] = { compile_failed: true };
-      return;
-    }
+
+    // Do NOT query COMPILE_STATUS here. ANGLE defers the real translate and
+    // D3D compile to the first query, so asking per shader serialises the
+    // whole batch exactly as the LINK_STATUS query used to -- measured at
+    // 739ms across 334 shaders on a cold boot, the single largest remaining
+    // cost. A shader that failed to compile simply makes its program fail to
+    // link, which pass B already catches; pass B re-queries COMPILE_STATUS
+    // only on that failure path, where the cost no longer matters and the
+    // per-stage message is still wanted.
     var program = gl.createProgram();
     gl.attachShader(program, vsh);
     gl.attachShader(program, fsh);
@@ -375,11 +361,29 @@ export class WasmWebGL extends WasmWebBrowser {
       let fsh = pending[p].fsh;
 
       if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        let message =
-          "webgl.compile_fail.link " +
-          args.shader_id +
-          " " +
-          gl.getProgramInfoLog(program);
+        // A link failure is usually a genuine link failure, but it is also how
+        // a compile failure surfaces now that pass A no longer checks. Ask
+        // which it was, so the message still names the offending stage.
+        let message;
+        if (!gl.getShaderParameter(vsh, gl.COMPILE_STATUS)) {
+          message =
+            "webgl.compile_fail.vertex " +
+            args.shader_id +
+            " " +
+            gl.getShaderInfoLog(vsh);
+        } else if (!gl.getShaderParameter(fsh, gl.COMPILE_STATUS)) {
+          message =
+            "webgl.compile_fail.fragment " +
+            args.shader_id +
+            " " +
+            gl.getShaderInfoLog(fsh);
+        } else {
+          message =
+            "webgl.compile_fail.link " +
+            args.shader_id +
+            " " +
+            gl.getProgramInfoLog(program);
+        }
         console.error(message);
         gl.deleteShader(vsh);
         gl.deleteShader(fsh);
