@@ -275,7 +275,13 @@ export class WasmWebBrowser extends WasmBridge {
     }
 
     FromWasmDownloadFile(args) {
-        const blob = new Blob([args.data], { type: args.mime_type });
+        // `args.data` is a WasmDataU8 handle -- {ptr, len, capacity} into wasm
+        // memory, not a typed array. Handing it to Blob() straight stringifies
+        // it and downloads the literal text "[object Object]". Copy it out
+        // (the blob outlives this call) and give the wasm allocation back.
+        const data = this.clone_data_u8(args.data);
+        this.free_data_u8(args.data);
+        const blob = new Blob([data], { type: args.mime_type });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
