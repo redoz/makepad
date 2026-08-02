@@ -2,7 +2,7 @@ use crate::{
     cx::Cx,
     draw_list::DrawListId,
     draw_pass::{DrawPassClearColor, DrawPassClearDepth, DrawPassId},
-    draw_shader::{CxDrawShaderCode, CxDrawShaderMapping},
+    draw_shader::{CxDrawShaderCode, CxDrawShaderMapping, DrawShaderId},
     draw_vars::DRAW_CALL_TEXTURE_SLOTS,
     makepad_math::*,
     makepad_wasm_bridge::*,
@@ -481,6 +481,15 @@ impl Cx {
             self.draw_shaders.shaders[draw_shader_id].os_shader_id = os_shader_id;
         }
         self.draw_shaders.compile_set.clear();
+    }
+
+    /// Web links shaders synchronously (`web_gl.js` queries LINK_STATUS inline),
+    /// so a helper is ready the moment it is requested. Returning true keeps the
+    /// SLUG promotion path in `draw_text.rs` working without an async compile
+    /// queue; the cost is that the first promotion blocks on the link. See
+    /// docs/superpowers/specs/2026-08-01-web-text-shader-boot-design.md.
+    pub fn is_draw_shader_window_ready(&self, _shader_id: DrawShaderId) -> bool {
+        true
     }
 }
 

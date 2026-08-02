@@ -29,7 +29,7 @@ use {
     },
 };
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
 fn register_draw_text_slug(vm: &mut ScriptVm) {
     let slug_shader = DrawTextSlug::script_shader(vm);
     let script_mod = script! {
@@ -528,7 +528,7 @@ fn register_draw_text_slug(vm: &mut ScriptVm) {
     vm.eval(script_mod);
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
 script_mod! {
     use mod.pod.*
     use mod.math.*
@@ -680,7 +680,7 @@ script_mod! {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_arch = "wasm32")))]
 script_mod! {
     use mod.pod.*
     use mod.math.*
@@ -1269,16 +1269,16 @@ pub struct DrawText {
     pending_slug_flush_generation: u64,
     #[rust]
     slug_flush_defer_depth: u64,
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
     #[rust]
     slug_draw: Option<DrawTextSlug>,
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
     #[rust]
     slug_promotion: SlugPromotionState,
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
     #[rust]
     slug_sync_plan: SlugDrawSyncPlan,
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
     #[rust]
     slug_layout_pad: u64,
     #[live]
@@ -1363,7 +1363,7 @@ pub struct DrawText {
     pub stem_darken_max: f32,
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
 #[derive(Script, ScriptHook)]
 #[repr(C)]
 struct DrawTextSlug {
@@ -1415,17 +1415,17 @@ enum ResolvedGlyph {
     Slug(crate::text::slug_atlas::SlugGlyphInfo),
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
 const SLUG_HELPER_BUILDS_PER_REDRAW: usize = 1;
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
 #[derive(Default)]
 struct SlugHelperWarmupState {
     redraw_id: u64,
     builds_this_redraw: usize,
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
 #[derive(Default)]
 struct SlugHelperPrewarmState {
     registered: bool,
@@ -1446,12 +1446,12 @@ struct SlugHelperPrewarmState {
 ///     this run or by another `draw_text` call sharing the same instance (text is drawn
 ///     in resumable chunks), so its draw item is up to date.
 /// `Area::is_valid` returns false for count == 0, so the explicit count check is required.
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
 fn area_holds_stale_content(area: &Area, cx: &Cx) -> bool {
     matches!(area, Area::Instance(inst) if inst.instance_count > 0) && !area.is_valid(cx)
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
 #[derive(Default)]
 struct SlugPromotionState {
     redraw_id: u64,
@@ -1460,7 +1460,7 @@ struct SlugPromotionState {
     allow_slug_this_redraw: bool,
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
 #[derive(Default)]
 struct SlugDrawSyncPlan {
     source_shader_id: Option<usize>,
@@ -1470,7 +1470,7 @@ struct SlugDrawSyncPlan {
     source_has_color_2: bool,
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
 impl SlugDrawSyncPlan {
     fn ensure(&mut self, cx: &Cx, source_shader_id: usize, target_shader_id: usize) {
         if self.source_shader_id == Some(source_shader_id)
@@ -1552,7 +1552,7 @@ impl SlugDrawSyncPlan {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
 fn slug_try_consume_helper_build_budget(cx: &mut Cx) -> bool {
     let redraw_id = cx.redraw_id;
     let state = cx.global::<SlugHelperWarmupState>();
@@ -1567,7 +1567,7 @@ fn slug_try_consume_helper_build_budget(cx: &mut Cx) -> bool {
     true
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
 fn slug_register_helper_if_needed(cx: &mut Cx) {
     let should_register = {
         let state = cx.global::<SlugHelperPrewarmState>();
@@ -1583,7 +1583,7 @@ fn slug_register_helper_if_needed(cx: &mut Cx) {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
 fn slug_maybe_prewarm_helper(cx: &mut Cx2d) -> bool {
     enum PrewarmAction {
         Ready,
@@ -1636,7 +1636,7 @@ fn slug_maybe_prewarm_helper(cx: &mut Cx2d) -> bool {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
 impl DrawText {
     fn slug_run_is_ready(&mut self, cx: &mut Cx2d, text: &LaidoutText) -> bool {
         let dpi_factor = cx.current_dpi_factor() as f32;
@@ -1727,7 +1727,7 @@ impl DrawText {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
 impl ScriptHook for DrawText {
     fn on_after_apply(
         &mut self,
@@ -1744,7 +1744,7 @@ impl ScriptHook for DrawText {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_arch = "wasm32")))]
 impl ScriptHook for DrawText {}
 
 #[derive(Clone, Debug)]
@@ -1764,7 +1764,7 @@ pub struct PreparedTextRun {
     pub glyphs: Vec<PreparedTextGlyph>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
 impl DrawTextSlug {
     fn has_open_batch(&self) -> bool {
         self.many_instances.is_some()
@@ -1924,7 +1924,7 @@ impl DrawTextSlug {
 }
 
 impl DrawText {
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
     fn slug_draw_is_ready(&self, cx: &mut Cx2d) -> bool {
         let Some(shader_id) = self
             .slug_draw
@@ -1936,7 +1936,7 @@ impl DrawText {
         cx.cx.is_draw_shader_window_ready(shader_id)
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
     fn ensure_slug_draw(&mut self, cx: &mut Cx2d) -> bool {
         if self.slug_draw.is_some() {
             self.sync_slug_draw_state(cx);
@@ -1962,7 +1962,7 @@ impl DrawText {
         false
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
     fn sync_slug_draw_state(&mut self, cx: &mut Cx2d) {
         let Some(source_shader_id) = self.draw_vars.draw_shader_id else {
             return;
@@ -2023,7 +2023,7 @@ impl DrawText {
             self.flush_slug_textures_if_allowed(cx);
             self.finish_many_instances(cx, instances);
         }
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
         if let Some(mut slug_draw) = self.slug_draw.take() {
             slug_draw.end_many_instances(cx, self.extend_area);
             self.slug_draw = Some(slug_draw);
@@ -2316,9 +2316,9 @@ impl DrawText {
         // Per-row batching gives each visual row its own AlignEntry so that
         // finish_row alignment shifts apply independently per row. This
         // requires a fresh draw (no `many_instances` reuse buffer).
-        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_arch = "wasm32")))]
         let per_row = self.many_instances.is_none() && text.rows.len() > 1;
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
         let per_row = false;
 
         if per_row {
@@ -2378,9 +2378,9 @@ impl DrawText {
 
                 // Draw this row's glyphs as a separate aligned-instance batch.
                 if let Some(mut instances) = cx.begin_many_aligned_instances(&self.draw_vars) {
-                    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+                    #[cfg(not(any(target_os = "linux", target_os = "windows", target_arch = "wasm32")))]
                     self.draw_row(cx, row_origin, row, &mut instances.instances);
-                    #[cfg(any(target_os = "linux", target_os = "windows"))]
+                    #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
                     let _ = (row_origin, row, &mut instances.instances);
                     self.finish_many_instances(cx, instances);
                 }
@@ -2608,7 +2608,7 @@ impl DrawText {
     }
 
     fn draw_text(&mut self, cx: &mut Cx2d, origin_in_lpxs: Point<f32>, text: &LaidoutText) {
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
         {
             self.update_draw_vars(cx);
             self.glyph_depth = self.draw_depth;
@@ -2776,7 +2776,7 @@ impl DrawText {
             return;
         }
 
-        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_arch = "wasm32")))]
         {
             self.update_draw_vars(cx);
             if let Some(mut instances) = self.many_instances.take() {
@@ -2810,19 +2810,19 @@ impl DrawText {
     }
 
     fn flush_slug_textures_if_allowed(&mut self, cx: &mut Cx2d) {
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
         let _ = cx;
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
         return;
-        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_arch = "wasm32")))]
         if self.slug_flush_defer_depth != 0 {
             return;
         }
-        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_arch = "wasm32")))]
         self.flush_slug_textures_if_needed(cx);
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_arch = "wasm32")))]
     fn flush_slug_textures_if_needed(&mut self, cx: &mut Cx2d) {
         if self.pending_slug_flush_generation == 0 {
             return;
@@ -2858,7 +2858,7 @@ impl DrawText {
         self.draw_vars.texture_slots[0] = Some(fonts.grayscale_texture().clone());
         self.draw_vars.texture_slots[1] = Some(fonts.color_texture().clone());
         self.draw_vars.texture_slots[2] = Some(fonts.msdf_texture().clone());
-        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_arch = "wasm32")))]
         {
             self.draw_vars.texture_slots[3] = Some(fonts.slug_curve_texture().clone());
             self.draw_vars.texture_slots[4] = Some(fonts.slug_band_texture().clone());
@@ -2935,7 +2935,7 @@ impl DrawText {
         cx.cx.debug.area(area, vec4(0.0, 0.0, 1.0, 1.0));
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_arch = "wasm32")))]
     fn draw_row(
         &mut self,
         cx: &mut Cx2d,
@@ -2970,7 +2970,7 @@ impl DrawText {
                 SlugGlyphCacheResult::Ready(slug_glyph) => {
                     return Some(ResolvedGlyph::Slug(slug_glyph));
                 }
-                #[cfg(any(target_os = "linux", target_os = "windows"))]
+                #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
                 SlugGlyphCacheResult::NeedsUpload {
                     generation,
                     glyph: _,
@@ -2979,7 +2979,7 @@ impl DrawText {
                         self.pending_slug_flush_generation.max(generation);
                     cx.redraw_all();
                 }
-                #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+                #[cfg(not(any(target_os = "linux", target_os = "windows", target_arch = "wasm32")))]
                 SlugGlyphCacheResult::NeedsUpload {
                     generation,
                     glyph: slug_glyph,
@@ -3000,7 +3000,7 @@ impl DrawText {
             .map(ResolvedGlyph::Raster)
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_arch = "wasm32")))]
     fn draw_glyph(
         &mut self,
         cx: &mut Cx2d,
@@ -3036,7 +3036,7 @@ impl DrawText {
         }
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_arch = "wasm32")))]
     fn draw_slug_glyph(
         &mut self,
         cx: &mut Cx2d,
@@ -3086,7 +3086,7 @@ impl DrawText {
         self.char_index += 1.0;
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
     fn draw_slug_raster_fallback_glyph(
         &mut self,
         cx: &mut Cx2d,
@@ -3204,7 +3204,7 @@ impl DrawText {
     pub fn set_total_chars(&mut self, cx: &mut Cx, total: f32) {
         self.draw_vars
             .set_instance_on_area(cx, live_id!(total_chars), &[total]);
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
         if let Some(slug_draw) = self.slug_draw.as_mut() {
             slug_draw
                 .draw_vars
@@ -3214,7 +3214,7 @@ impl DrawText {
 
     pub fn redraw_areas(&self, cx: &mut Cx) {
         self.draw_vars.area.redraw(cx);
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
         if let Some(slug_draw) = self.slug_draw.as_ref() {
             slug_draw.draw_vars.area.redraw(cx);
         }
@@ -3234,7 +3234,7 @@ impl DrawText {
     }
 
     pub fn get_aa_pad_px(&self, cx: &mut Cx) -> f32 {
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
         if let Some(slug_draw) = self.slug_draw.as_ref() {
             let mut value = [0.0];
             slug_draw
@@ -3455,11 +3455,11 @@ impl ScriptHook for FontFamily {
 #[cfg(test)]
 mod tests {
     use super::DrawText;
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
     use super::{register_draw_text_slug, DrawTextSlug};
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
     use crate::makepad_platform::{live_id, LiveId, ScriptNew, ScriptVmCx};
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
     use crate::makepad_platform::{vec4, Cx};
 
     #[test]
@@ -3467,14 +3467,14 @@ mod tests {
         assert_eq!(std::mem::size_of::<DrawText>() % 16, 0);
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
     fn read_instance(draw_vars: &super::DrawVars, cx: &mut Cx, id: LiveId) -> [f32; 4] {
         let mut value = [0.0; 4];
         draw_vars.get_instance(cx, id, &mut value);
         value
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
     #[test]
     fn draw_text_color_is_visible_through_instance_slice() {
         let mut cx = Cx::new(Box::new(|_, _| {}));
@@ -3490,7 +3490,7 @@ mod tests {
         });
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_arch = "wasm32"))]
     #[test]
     fn slug_helper_color_is_visible_through_instance_slice() {
         let mut cx = Cx::new(Box::new(|_, _| {}));
