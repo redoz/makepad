@@ -287,27 +287,6 @@ export class WasmWebGL extends WasmWebBrowser {
   }
 
   FromWasmCompileWebGLShader(args) {
-    function get_attrib_locations(gl, program, base, slots) {
-      let attrib_locs = [];
-      let attribs = slots >> 2;
-      let stride = slots * 4;
-      if ((slots & 3) != 0) attribs++;
-      for (let i = 0; i < attribs; i++) {
-        let size = slots - i * 4;
-        if (size > 4) size = 4;
-        let name = base + i;
-        attrib_locs.push({
-          loc: gl.getAttribLocation(program, name),
-          offset: i * 16,
-          size: size,
-          stride: slots * 4,
-          integer: false,
-          gl_type: gl.FLOAT,
-        });
-      }
-      return attrib_locs;
-    }
-
     var gl = this.gl;
     var vsh = gl.createShader(gl.VERTEX_SHADER);
 
@@ -345,98 +324,142 @@ export class WasmWebGL extends WasmWebBrowser {
     gl.attachShader(program, vsh);
     gl.attachShader(program, fsh);
     gl.linkProgram(program);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      let message =
-        "webgl.compile_fail.link " +
-        args.shader_id +
-        " " +
-        gl.getProgramInfoLog(program);
-      console.error(message);
-      gl.deleteShader(vsh);
-      gl.deleteShader(fsh);
-      gl.deleteProgram(program);
-      this.draw_shaders[args.shader_id] = { compile_failed: true };
-      return;
-    }
 
-    gl.deleteShader(vsh);
-    gl.deleteShader(fsh);
-    this.assert_no_gl_error(gl, "compile_shader");
-
-    let texture_locs = [];
-    for (let i = 0; i < args.textures.length; i++) {
-      let tex_name = args.textures[i].name;
-      let loc = gl.getUniformLocation(program, "tex_" + tex_name);
-      if (loc === null) {
-        // Keep old fallback names for non-script shaders.
-        loc = gl.getUniformLocation(program, "ds_" + tex_name);
-      }
-      texture_locs.push({
-        name: tex_name,
-        ty: args.textures[i].ty,
-        loc: loc,
-      });
-    }
-
-    let pass_uniforms_binding = this.get_uniform_block_binding(
-      program,
-      "passUniforms",
-    );
-    let draw_list_uniforms_binding = this.get_uniform_block_binding(
-      program,
-      "draw_listUniforms",
-    );
-    let draw_call_uniforms_binding = this.get_uniform_block_binding(
-      program,
-      "draw_callUniforms",
-    );
-    let user_uniforms_binding = this.get_uniform_block_binding(
-      program,
-      "userUniforms",
-    );
-    let live_uniforms_binding = this.get_uniform_block_binding(
-      program,
-      "liveUniforms",
-    );
-    this.draw_shaders[args.shader_id] = {
-      vertex: args.vertex,
-      pixel: args.pixel,
-      geom_attribs: get_attrib_locations(
-        gl,
-        program,
-        "packed_geometry_",
-        args.geometry_slots,
-      ),
-      inst_attribs: get_attrib_locations(
-        gl,
-        program,
-        "packed_instance_",
-        args.instance_slots,
-      ),
-      pass_uniforms_binding: pass_uniforms_binding,
-      draw_list_uniforms_binding: draw_list_uniforms_binding,
-      draw_call_uniforms_binding: draw_call_uniforms_binding,
-      user_uniforms_binding: user_uniforms_binding,
-      live_uniforms_binding: live_uniforms_binding,
-      pass_uniform_buf: gl.createBuffer(),
-      draw_list_uniform_buf: gl.createBuffer(),
-      draw_call_uniform_buf: gl.createBuffer(),
-      user_uniform_buf: gl.createBuffer(),
-      live_uniform_buf: gl.createBuffer(),
-      texture_locs: texture_locs,
-      geometry_slots: args.geometry_slots,
-      instance_slots: args.instance_slots,
+    // Do NOT query LINK_STATUS and do NOT introspect the program here. Any
+    // introspection (getUniformLocation / getUniformBlockBinding /
+    // getAttribLocation) blocks until the link finishes, exactly as the status
+    // query does, and would serialise the whole batch again. The shaders are
+    // deliberately not deleted yet: pass B needs them alive to report a link
+    // failure usefully.
+    this.pending_shaders.push({
+      shader_id: args.shader_id,
       program: program,
-    };
-    this.assert_no_gl_error(gl, "compile_shader_end");
+      vsh: vsh,
+      fsh: fsh,
+      args: args,
+    });
   }
 
+  // Pass B. Drains everything pass A parked: query LINK_STATUS once per program
+  // after every link in the batch has been issued, then introspect and publish.
   FromWasmFinishWebGLShaders() {
+    function get_attrib_locations(gl, program, base, slots) {
+      let attrib_locs = [];
+      let attribs = slots >> 2;
+      let stride = slots * 4;
+      if ((slots & 3) != 0) attribs++;
+      for (let i = 0; i < attribs; i++) {
+        let size = slots - i * 4;
+        if (size > 4) size = 4;
+        let name = base + i;
+        attrib_locs.push({
+          loc: gl.getAttribLocation(program, name),
+          offset: i * 16,
+          size: size,
+          stride: slots * 4,
+          integer: false,
+          gl_type: gl.FLOAT,
+        });
+      }
+      return attrib_locs;
+    }
+
+    var gl = this.gl;
     let pending = this.pending_shaders;
     this.pending_shaders = [];
-    for (let i = 0; i < pending.length; i++) {
-      // Filled in by the next commit. Nothing is parked yet, so this never runs.
-      void pending[i];
+
+    for (let p = 0; p < pending.length; p++) {
+      let args = pending[p].args;
+      let program = pending[p].program;
+      let vsh = pending[p].vsh;
+      let fsh = pending[p].fsh;
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        let message =
+          "webgl.compile_fail.link " +
+          args.shader_id +
+          " " +
+          gl.getProgramInfoLog(program);
+        console.error(message);
+        gl.deleteShader(vsh);
+        gl.deleteShader(fsh);
+        gl.deleteProgram(program);
+        this.draw_shaders[args.shader_id] = { compile_failed: true };
+        // continue, not return: one bad program must not abandon the rest of
+        // the batch.
+        continue;
+      }
+
+      gl.deleteShader(vsh);
+      gl.deleteShader(fsh);
+      this.assert_no_gl_error(gl, "compile_shader");
+
+      let texture_locs = [];
+      for (let i = 0; i < args.textures.length; i++) {
+        let tex_name = args.textures[i].name;
+        let loc = gl.getUniformLocation(program, "tex_" + tex_name);
+        if (loc === null) {
+          // Keep old fallback names for non-script shaders.
+          loc = gl.getUniformLocation(program, "ds_" + tex_name);
+        }
+        texture_locs.push({
+          name: tex_name,
+          ty: args.textures[i].ty,
+          loc: loc,
+        });
+      }
+
+      let pass_uniforms_binding = this.get_uniform_block_binding(
+        program,
+        "passUniforms",
+      );
+      let draw_list_uniforms_binding = this.get_uniform_block_binding(
+        program,
+        "draw_listUniforms",
+      );
+      let draw_call_uniforms_binding = this.get_uniform_block_binding(
+        program,
+        "draw_callUniforms",
+      );
+      let user_uniforms_binding = this.get_uniform_block_binding(
+        program,
+        "userUniforms",
+      );
+      let live_uniforms_binding = this.get_uniform_block_binding(
+        program,
+        "liveUniforms",
+      );
+      this.draw_shaders[args.shader_id] = {
+        vertex: args.vertex,
+        pixel: args.pixel,
+        geom_attribs: get_attrib_locations(
+          gl,
+          program,
+          "packed_geometry_",
+          args.geometry_slots,
+        ),
+        inst_attribs: get_attrib_locations(
+          gl,
+          program,
+          "packed_instance_",
+          args.instance_slots,
+        ),
+        pass_uniforms_binding: pass_uniforms_binding,
+        draw_list_uniforms_binding: draw_list_uniforms_binding,
+        draw_call_uniforms_binding: draw_call_uniforms_binding,
+        user_uniforms_binding: user_uniforms_binding,
+        live_uniforms_binding: live_uniforms_binding,
+        pass_uniform_buf: gl.createBuffer(),
+        draw_list_uniform_buf: gl.createBuffer(),
+        draw_call_uniform_buf: gl.createBuffer(),
+        user_uniform_buf: gl.createBuffer(),
+        live_uniform_buf: gl.createBuffer(),
+        texture_locs: texture_locs,
+        geometry_slots: args.geometry_slots,
+        instance_slots: args.instance_slots,
+        program: program,
+      };
+      this.assert_no_gl_error(gl, "compile_shader_end");
     }
   }
 

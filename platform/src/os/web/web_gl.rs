@@ -486,11 +486,16 @@ impl Cx {
         self.draw_shaders.compile_set.clear();
     }
 
-    /// Web links shaders synchronously (`web_gl.js` queries LINK_STATUS inline),
-    /// so a helper is ready the moment it is requested. Returning true keeps the
-    /// SLUG promotion path in `draw_text.rs` working without an async compile
-    /// queue; the cost is that the first promotion blocks on the link. See
-    /// docs/superpowers/specs/2026-08-01-web-text-shader-boot-design.md.
+    /// Web finishes every shader in a batch before the frame that needs it: the
+    /// links are issued by `FromWasmCompileWebGLShader` and resolved by
+    /// `FromWasmFinishWebGLShaders`, which is sent before `handle_repaint` runs.
+    /// So a helper is always ready by the time it can be drawn.
+    ///
+    /// Returning true keeps the SLUG promotion path in `draw_text.rs` working
+    /// without an async compile queue; the cost is that a promotion arriving
+    /// outside a compile batch blocks on its link. See
+    /// docs/superpowers/specs/2026-08-01-web-text-shader-boot-design.md and
+    /// docs/superpowers/specs/2026-08-02-web-batched-shader-link-design.md.
     pub fn is_draw_shader_window_ready(&self, _shader_id: DrawShaderId) -> bool {
         true
     }
