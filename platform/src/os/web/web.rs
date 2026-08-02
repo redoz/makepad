@@ -1079,6 +1079,7 @@ impl CxOsApi for Cx {
             FromWasmXrStartPresenting::to_js_code(),
             FromWasmXrStopPresenting::to_js_code(),
             FromWasmCompileWebGLShader::to_js_code(),
+            FromWasmFinishWebGLShaders::to_js_code(),
             FromWasmAllocArrayBuffer::to_js_code(),
             FromWasmAllocIndexBuffer::to_js_code(),
             FromWasmAllocVao::to_js_code(),

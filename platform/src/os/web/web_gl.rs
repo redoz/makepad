@@ -480,6 +480,9 @@ impl Cx {
 
             self.draw_shaders.shaders[draw_shader_id].os_shader_id = os_shader_id;
         }
+        // Unconditional: a finish pass over an empty pending list is free, and a
+        // conditional send is one more thing to get wrong.
+        self.os.from_wasm(FromWasmFinishWebGLShaders {});
         self.draw_shaders.compile_set.clear();
     }
 

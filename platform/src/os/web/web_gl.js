@@ -7,6 +7,9 @@ export class WasmWebGL extends WasmWebBrowser {
       return;
     }
     this.draw_shaders = [];
+    // Programs whose link has been issued but not yet queried. Drained by
+    // FromWasmFinishWebGLShaders once per compile batch.
+    this.pending_shaders = [];
     this.array_buffers = [];
     this.index_buffers = [];
     this.vaos = [];
@@ -426,6 +429,15 @@ export class WasmWebGL extends WasmWebBrowser {
       program: program,
     };
     this.assert_no_gl_error(gl, "compile_shader_end");
+  }
+
+  FromWasmFinishWebGLShaders() {
+    let pending = this.pending_shaders;
+    this.pending_shaders = [];
+    for (let i = 0; i < pending.length; i++) {
+      // Filled in by the next commit. Nothing is parked yet, so this never runs.
+      void pending[i];
+    }
   }
 
   FromWasmAllocIndexBuffer(args) {

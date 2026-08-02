@@ -201,6 +201,14 @@ pub struct FromWasmCompileWebGLShader {
     pub textures: Vec<WTextureInput>,
 }
 
+/// Sent once after a batch of `FromWasmCompileWebGLShader` messages. Tells JS to
+/// finish every program it parked: query `LINK_STATUS`, do the uniform and
+/// attribute introspection, and publish the record. Splitting the batch this way
+/// lets the driver link all programs in parallel on its worker threads instead of
+/// serialising on one blocking status query per program.
+#[derive(FromWasm)]
+pub struct FromWasmFinishWebGLShaders {}
+
 #[derive(FromWasm)]
 pub struct FromWasmAllocArrayBuffer {
     pub buffer_id: usize,
