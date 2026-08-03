@@ -1345,6 +1345,20 @@ impl TextFlow {
         self.selectable && self.selection_anchor != self.selection_cursor
     }
 
+    /// The current selection as `(start, end)` byte indices into the
+    /// accumulated selection buffer, normalised so `start <= end`. `None` when
+    /// nothing is selected. A host that needs to map a selection back onto its
+    /// own source needs the pair, not just the extracted string.
+    pub fn selection_range(&self) -> Option<(usize, usize)> {
+        if !self.has_selection() {
+            return None;
+        }
+        Some((
+            self.selection_anchor.min(self.selection_cursor),
+            self.selection_anchor.max(self.selection_cursor),
+        ))
+    }
+
     /// Selection anchor rect for clipboard/action popups.
     fn selection_clipboard_rect(&self, cx: &Cx) -> Rect {
         let start = self.selection_anchor.min(self.selection_cursor);
@@ -1489,6 +1503,41 @@ impl TextFlow {
         // Note: deliberately NOT pushed onto `area_stack` — `end_list_item` never pops,
         // so a push here would leak an entry per list item and let a stray close tag
         // (unbalanced HTML) pop the wrong block's area in `end_code`/`end_quote`.
+    }
+
+    /// `begin_list_item` for callers that draw their marker as a DECORATION
+    /// rather than as text. Reserves a `gutter`-wide empty box in the hanging
+    /// marker column and returns its screen rect. `begin_list_item` draws its
+    /// `dot` argument through `draw_text`, which puts a glyph in the selection
+    /// buffer backed by no host source range; a reading view cannot do that
+    /// without breaking "everything drawn maps back to source".
+    pub fn begin_list_item_gutter(&mut self, cx: &mut Cx2d, gutter: f64, pad: f64) -> Rect {
+        let fs = *self.font_sizes.last().unwrap_or(&self.font_size);
+        let font_based_padding = fs as f64 * pad;
+
+        cx.begin_turtle(
+            self.list_item_walk,
+            Layout {
+                padding: Inset {
+                    left: self.list_item_layout.padding.left + font_based_padding,
+                    ..self.list_item_layout.padding
+                },
+                ..self.list_item_layout
+            },
+        );
+
+        cx.turtle_mut()
+            .move_right_down(dvec2(-font_based_padding, 0.0));
+
+        let gutter_rect = TextFlow::walk_margin(cx, gutter);
+        TextFlow::walk_margin(cx, self.list_item_marker_pad);
+
+        // Match `begin_list_item`: wrapped rows align with the text after the
+        // marker column, not with the marker itself.
+        let actual_indent = cx.turtle().pos().x - cx.turtle().origin().x;
+        cx.turtle_mut().set_padding_left(actual_indent);
+        // Deliberately NOT pushed onto `area_stack` (see `begin_list_item`).
+        gutter_rect
     }
 
     pub fn end_list_item(&mut self, cx: &mut Cx2d) {
