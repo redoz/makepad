@@ -464,6 +464,11 @@ pub struct FileTree {
     count: usize,
     #[rust]
     stack: Vec<f64>,
+    /// Whether the most recent `file`/`begin_folder` drew its row, or culled it
+    /// for sitting outside the scrolled viewport. Read back by
+    /// `last_node_drawn`; see that method for why a host needs it.
+    #[rust(true)]
+    last_node_drawn: bool,
 }
 
 impl ScriptHook for FileTree {
@@ -750,9 +755,11 @@ impl FileTree {
         let height = self.node_height * scale;
         let walk = Walk::new(Size::fill(), Size::Fixed(height));
         if scale > 0.01 && cx.walk_turtle_would_be_visible(walk) {
+            self.last_node_drawn = true;
             return true;
         } else {
             cx.walk_turtle(walk);
+            self.last_node_drawn = false;
             return false;
         }
     }
@@ -871,6 +878,28 @@ impl FileTree {
         self.tree_nodes
             .get(&file_node_id)
             .map_or(0.0, |node| node.opened)
+    }
+
+    /// The fold amount the tree is drawing rows at right now -- the product of
+    /// every ancestor folder's animated open amount, exactly the factor the row
+    /// height and font are shrunk by.
+    ///
+    /// A host that overlays its own per-row marks must take the child scale from
+    /// here after `begin_folder` rather than multiplying `folder_opened` itself:
+    /// a folder row scrolled out of the viewport is culled and its node is
+    /// forgotten, so `folder_opened` reports 0 for it -- and a host that folded
+    /// that 0 into its scale would fade every descendant's marks to nothing
+    /// while the tree kept drawing their labels at full size.
+    pub fn current_scale(&self) -> f64 {
+        self.stack.last().cloned().unwrap_or(1.0)
+    }
+
+    /// Whether the most recent `file` / `begin_folder` actually drew its row, or
+    /// culled it for sitting outside the scrolled viewport. A host overlaying
+    /// marks on rows should skip the rows that report `false` -- they were never
+    /// painted, and the marks would be the only thing drawn there.
+    pub fn last_node_drawn(&self) -> bool {
+        self.last_node_drawn
     }
 
     pub fn set_folder_is_open(
