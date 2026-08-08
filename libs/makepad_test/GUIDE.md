@@ -63,9 +63,26 @@ The runtime is synchronous and serial-first:
 
 The in-process runner also serializes app sessions, so UI suites should be invoked with `--test-threads=1`.
 
+## Application Arguments
+
+Use `TestConfig::args` to pass application arguments. Headless and visible modes receive the same arguments unchanged.
+
+```rust,ignore
+let mut config = TestConfig::current_package(
+    env!("CARGO_MANIFEST_DIR"),
+    env!("CARGO_PKG_NAME"),
+    "ui::fixture",
+)?;
+config.args = vec!["tests/fixtures/mini".into(), "--title".into(), "ui-mini".into()];
+run_with_config(config, |app| {
+    app.locator(Selector::id("main_window")).wait_visible();
+})
+```
+
 ## Visible Studio Mode
 
 By default, `makepad_test` launches the app headlessly through an in-process hub.
+
 For local debugging, you can switch the same test to a visible Studio-backed run:
 
 ```bash

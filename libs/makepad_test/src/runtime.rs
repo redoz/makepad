@@ -77,6 +77,7 @@ pub struct TestConfig {
     pub manifest_dir: PathBuf,
     pub test_name: String,
     pub artifacts_dir: PathBuf,
+    pub args: Vec<String>,
     pub listen_address: SocketAddr,
     pub env: HashMap<String, String>,
     pub startup_timeout: Duration,
@@ -118,6 +119,7 @@ impl TestConfig {
             manifest_dir,
             test_name,
             artifacts_dir,
+            args: Vec::new(),
             listen_address: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
             env,
             startup_timeout: STARTUP_TIMEOUT,
@@ -1158,14 +1160,7 @@ fn start_headless_app(config: &TestConfig) -> TestResult<(TestConnection, QueryI
         .map_err(TestError::new)?,
     );
 
-    let _ = connection.send(ClientToHub::Run {
-        mount: config.mount_name.clone(),
-        process: config.package_name.clone(),
-        args: Vec::new(),
-        standalone: None,
-        env: Some(config.env.clone()),
-        buildbox: None,
-    })?;
+    let _ = connection.send(run_request(config, config.mount_name.clone()))?;
 
     let build_id = wait_for_run_ready(
         &connection,
@@ -1189,14 +1184,7 @@ fn start_visible_app(config: &TestConfig) -> TestResult<(TestConnection, QueryId
         config.startup_timeout,
     )?;
 
-    let _ = connection.send(ClientToHub::Run {
-        mount: mount.clone(),
-        process: config.package_name.clone(),
-        args: Vec::new(),
-        standalone: None,
-        env: Some(config.env.clone()),
-        buildbox: None,
-    })?;
+    let _ = connection.send(run_request(config, mount.clone()))?;
 
     let build_id = wait_for_run_ready(
         &connection,
@@ -1206,6 +1194,17 @@ fn start_visible_app(config: &TestConfig) -> TestResult<(TestConnection, QueryId
     )?;
 
     Ok((connection, build_id))
+}
+
+fn run_request(config: &TestConfig, mount: String) -> ClientToHub {
+    ClientToHub::Run {
+        mount,
+        process: config.package_name.clone(),
+        args: config.args.clone(),
+        standalone: None,
+        env: Some(config.env.clone()),
+        buildbox: None,
+    }
 }
 
 fn clear_existing_visible_builds(
@@ -1519,17 +1518,48 @@ fn primary_shortcut_modifiers() -> KeyModifiers {
 #[cfg(test)]
 mod tests {
     use super::{
-        env_duration_ms, primary_window_scope, sanitize_path_component, snapshot_is_visible,
-        snapshot_sort_key, studio_addr_from_env, studio_mount_from_env, visible_mode_enabled,
-        TestError, TestResult, WidgetMatch,
+        env_duration_ms, primary_window_scope, run_request, sanitize_path_component,
+        snapshot_is_visible, snapshot_sort_key, studio_addr_from_env, studio_mount_from_env,
+        visible_mode_enabled, TestError, TestResult, WidgetMatch,
     };
     use crate::{Selector, TestConfig};
-    use makepad_studio_protocol::WidgetSnapshot;
+    use makepad_studio_protocol::{hub_protocol::ClientToHub, WidgetSnapshot};
     use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
     use std::time::Duration;
 
     static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+
+    #[test]
+    fn config_defaults_to_no_application_arguments() {
+        let config = TestConfig::new("/tmp/example", "makepad-example", "ui::test").unwrap();
+        assert!(config.args.is_empty());
+    }
+
+    #[test]
+    fn run_request_forwards_mount_package_and_arguments() {
+        let mut config =
+            TestConfig::new("/tmp/example", "makepad-example", "ui::test").unwrap();
+        config.args = vec![
+            "tests/fixtures/mini".to_string(),
+            "--title".to_string(),
+            "ui-1-nav".to_string(),
+        ];
+
+        let ClientToHub::Run {
+            mount,
+            process,
+            args,
+            ..
+        } = run_request(&config, "visible-mount".to_string())
+        else {
+            panic!("expected Run request");
+        };
+
+        assert_eq!(mount, "visible-mount");
+        assert_eq!(process, "makepad-example");
+        assert_eq!(args, config.args);
+    }
 
     fn restore_env_var(name: &str, value: Option<String>) {
         if let Some(value) = value {

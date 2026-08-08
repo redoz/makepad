@@ -2,6 +2,22 @@
 
 `makepad_test` provides Rust-native UI regression tests for Makepad apps. Tests live next to the package they exercise, run through normal `cargo test`, and drive the app through the existing Studio protocol in headless mode.
 
+## Application Arguments
+
+Use `TestConfig::args` to pass application arguments. Headless and visible modes receive the same arguments unchanged.
+
+```rust,ignore
+let mut config = TestConfig::current_package(
+    env!("CARGO_MANIFEST_DIR"),
+    env!("CARGO_PKG_NAME"),
+    "ui::fixture",
+)?;
+config.args = vec!["tests/fixtures/mini".into(), "--title".into(), "ui-mini".into()];
+run_with_config(config, |app| {
+    app.locator(Selector::id("main_window")).wait_visible();
+})
+```
+
 ## Quick Start
 
 Add this to the package under test:
