@@ -202,7 +202,7 @@ pub use crate::{
         CreateAt, DrawStateWrap, DrawStep, DrawStepApi, OptionWidgetRefExt, Widget, WidgetAction,
         WidgetActionCast, WidgetActionCxExt, WidgetActionOptionApi, WidgetActionTrait,
         WidgetActionsApi, WidgetFactory, WidgetNode, WidgetRef, WidgetRegister, WidgetRegistry,
-        WidgetSet, WidgetSetIterator, WidgetUid,
+        WidgetSemanticItem, WidgetSet, WidgetSetIterator, WidgetUid,
     },
     widget_async::{
         set_widget_async_trace, CxSplashVmExt, CxWidgetToScriptCallExt, ScriptAsyncCalls,

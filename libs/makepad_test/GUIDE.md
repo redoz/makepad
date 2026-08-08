@@ -196,6 +196,13 @@ Each snapshot record exposes:
 
 That is enough to cover common labels, buttons, text inputs, checkboxes/toggles, dock tabs, and multi-window widgets without scraping raw dumps.
 
+## Custom-drawn controls
+
+For a custom-drawn control, emit one `WidgetSemanticItem` for each actionable
+or observable virtual child. Use stable semantic identity and type names, and
+use the same rectangles as hit testing. Do not expose paint-only fragments.
+Keep application scenarios independent of item IDs through an adapter.
+
 ## Failure Artifacts
 
 Failed tests write to:

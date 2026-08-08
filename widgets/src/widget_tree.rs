@@ -2098,6 +2098,35 @@ impl WidgetTree {
                 });
             }
 
+            for item in widget.semantic_items(cx) {
+                let (window_id, window_index, offset) = window_context
+                    .as_ref()
+                    .map(|context| {
+                        (
+                            context.id.clone(),
+                            context.index,
+                            context.position,
+                        )
+                    })
+                    .unwrap_or_default();
+                widgets.push(WidgetSnapshot {
+                    id: item.id,
+                    widget_type: item.widget_type,
+                    window_id,
+                    window_index,
+                    visible: item.visible,
+                    enabled: item.enabled,
+                    x: (item.rect.pos.x + offset.x).round() as i64,
+                    y: (item.rect.pos.y + offset.y).round() as i64,
+                    width: item.rect.size.x.round() as i64,
+                    height: item.rect.size.y.round() as i64,
+                    text: item.text,
+                    value: item.value,
+                    checked: item.checked,
+                    selected: item.selected,
+                });
+            }
+
             let dock_dump = widget.borrow::<Dock>().map(|dock| dock.compact_dump(cx));
             if let Some(dock_dump) = dock_dump {
                 let window_id = window_context
@@ -2576,7 +2605,7 @@ impl<'a, 'b> CxWidgetExt for Cx3d<'a, 'b> {
 mod tests {
     use super::*;
     use crate::widget::{DrawStepApi, WidgetRef, WidgetUid};
-    use crate::{DrawStep, Widget, WidgetNode};
+    use crate::{DrawStep, Widget, WidgetNode, WidgetSemanticItem};
 
     // Minimal Widget impl for testing
     struct TestWidget {
@@ -2623,12 +2652,70 @@ mod tests {
         }
     }
 
+    struct SemanticTestWidget {
+        uid: WidgetUid,
+    }
+
+    impl ScriptApply for SemanticTestWidget {
+        fn script_apply(
+            &mut self,
+            _vm: &mut ScriptVm,
+            _apply: &Apply,
+            _scope: &mut Scope,
+            _value: ScriptValue,
+        ) {
+        }
+    }
+
+    impl WidgetNode for SemanticTestWidget {
+        fn widget_uid(&self) -> WidgetUid {
+            self.uid
+        }
+
+        fn walk(&mut self, _cx: &mut Cx) -> Walk {
+            Walk::default()
+        }
+
+        fn area(&self) -> Area {
+            Area::Empty
+        }
+
+        fn redraw(&mut self, _cx: &mut Cx) {}
+    }
+
+    impl Widget for SemanticTestWidget {
+        fn draw_walk(&mut self, _cx: &mut Cx2d, _scope: &mut Scope, _walk: Walk) -> DrawStep {
+            DrawStep::done()
+        }
+
+        fn semantic_items(&self, _cx: &Cx) -> Vec<WidgetSemanticItem> {
+            vec![WidgetSemanticItem {
+                id: "row:orders".into(),
+                widget_type: "TestTreeRow".into(),
+                rect: Rect {
+                    pos: dvec2(10.0, 20.0),
+                    size: dvec2(80.0, 24.0),
+                },
+                visible: true,
+                enabled: true,
+                text: Some("Orders".into()),
+                value: Some("orders".into()),
+                checked: Some(true),
+                selected: Some("orders".into()),
+            }]
+        }
+    }
+
     fn make_widget(uid: WidgetUid, children: Vec<(LiveId, WidgetRef)>) -> WidgetRef {
         WidgetRef::new_with_inner(Box::new(TestWidget {
             uid,
             children,
             skip_search: false,
         }))
+    }
+
+    fn make_semantic_widget(uid: WidgetUid) -> WidgetRef {
+        WidgetRef::new_with_inner(Box::new(SemanticTestWidget { uid }))
     }
 
     fn make_widget_skip(uid: WidgetUid, children: Vec<(LiveId, WidgetRef)>) -> WidgetRef {
@@ -2717,6 +2804,36 @@ mod tests {
             .get(&root_uid)
             .and_then(|root_cache| root_cache.get(&hash))
             .and_then(|bucket| bucket.iter().find(|entry| entry.path.as_slice() == path))
+    }
+
+    #[test]
+    fn widget_tree_snapshot_includes_custom_semantic_items() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.components.get_or_create::<WidgetRegistry>();
+        let tree = WidgetTree::default();
+        let root = make_semantic_widget(WidgetUid::new());
+        tree.set_root_widget(root.clone());
+
+        let snapshot = tree.snapshot(&cx);
+        let item = snapshot
+            .iter()
+            .find(|item| item.id == "row:orders")
+            .expect("custom semantic item should be present in the snapshot");
+
+        assert_eq!(item.id, "row:orders");
+        assert_eq!(item.widget_type, "TestTreeRow");
+        assert_eq!(item.window_id, "");
+        assert_eq!(item.window_index, 0);
+        assert!(item.visible);
+        assert!(item.enabled);
+        assert_eq!(item.x, 10);
+        assert_eq!(item.y, 20);
+        assert_eq!(item.width, 80);
+        assert_eq!(item.height, 24);
+        assert_eq!(item.text.as_deref(), Some("Orders"));
+        assert_eq!(item.value.as_deref(), Some("orders"));
+        assert_eq!(item.checked, Some(true));
+        assert_eq!(item.selected.as_deref(), Some("orders"));
     }
 
     // ------------------------------------------------------------------

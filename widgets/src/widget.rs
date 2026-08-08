@@ -208,6 +208,19 @@ pub trait WidgetNode: ScriptApply {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WidgetSemanticItem {
+    pub id: String,
+    pub widget_type: String,
+    pub rect: Rect,
+    pub visible: bool,
+    pub enabled: bool,
+    pub text: Option<String>,
+    pub value: Option<String>,
+    pub checked: Option<bool>,
+    pub selected: Option<String>,
+}
+
 pub trait Widget: WidgetNode {
     fn handle_event_with(
         &mut self,
@@ -235,6 +248,14 @@ pub trait Widget: WidgetNode {
     /// Defaults to true. Override to return false for non-interactive widgets.
     fn is_interactive(&self) -> bool {
         true
+    }
+
+    /// Return actionable semantic children drawn inside this widget.
+    ///
+    /// Rectangles use owning-window client coordinates. The widget-tree snapshot
+    /// collector adds the window position and identity.
+    fn semantic_items(&self, _cx: &Cx) -> Vec<WidgetSemanticItem> {
+        Vec::new()
     }
 
     fn widget(&self, cx: &Cx, path: &[LiveId]) -> WidgetRef {
@@ -743,6 +764,14 @@ impl WidgetRef {
             .try_borrow()
             .ok()
             .and_then(|r| r.as_ref().map(|w| w.widget.ref_cast_type_id()))
+    }
+
+    pub fn semantic_items(&self, cx: &Cx) -> Vec<WidgetSemanticItem> {
+        self.0
+            .try_borrow()
+            .ok()
+            .and_then(|r| r.as_ref().map(|w| w.widget.semantic_items(cx)))
+            .unwrap_or_default()
     }
 
     pub fn area(&self) -> Area {
