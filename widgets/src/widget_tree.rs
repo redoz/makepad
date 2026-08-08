@@ -2116,8 +2116,8 @@ impl WidgetTree {
                     window_index,
                     visible: item.visible,
                     enabled: item.enabled,
-                    x: (item.rect.pos.x + offset.x).round() as i64,
-                    y: (item.rect.pos.y + offset.y).round() as i64,
+                    x: item.rect.pos.x.round() as i64 + offset.x.round() as i64,
+                    y: item.rect.pos.y.round() as i64 + offset.y.round() as i64,
                     width: item.rect.size.x.round() as i64,
                     height: item.rect.size.y.round() as i64,
                     text: item.text,
@@ -2693,7 +2693,7 @@ mod tests {
                 id: "row:orders".into(),
                 widget_type: "TestTreeRow".into(),
                 rect: Rect {
-                    pos: dvec2(10.0, 20.0),
+                    pos: dvec2(10.6, 20.4),
                     size: dvec2(80.0, 24.0),
                 },
                 visible: true,
@@ -2816,13 +2816,13 @@ mod tests {
         window.configure_window(
             &mut cx,
             dvec2(640.0, 480.0),
-            dvec2(30.0, 40.0),
+            dvec2(30.6, 40.4),
             false,
             "semantic snapshot test".to_string(),
         );
         cx.windows[WindowId(window.window_index(), 0)]
             .window_geom
-            .position = dvec2(30.0, 40.0);
+            .position = dvec2(30.6, 40.4);
         let window = WidgetRef::new_with_inner(Box::new(window));
         let window_uid = window.widget_uid();
         let root = make_semantic_widget(WidgetUid::new());
@@ -2847,7 +2847,7 @@ mod tests {
         assert_eq!(item.window_index, 1);
         assert!(item.visible);
         assert!(item.enabled);
-        assert_eq!(item.x, 40);
+        assert_eq!(item.x, 42);
         assert_eq!(item.y, 60);
         assert_eq!(item.width, 80);
         assert_eq!(item.height, 24);
