@@ -2811,8 +2811,28 @@ mod tests {
         let mut cx = Cx::new(Box::new(|_, _| {}));
         cx.components.get_or_create::<WidgetRegistry>();
         let tree = WidgetTree::default();
+        let _first_window = cx.with_vm(Window::script_new);
+        let mut window = cx.with_vm(Window::script_new);
+        window.configure_window(
+            &mut cx,
+            dvec2(640.0, 480.0),
+            dvec2(30.0, 40.0),
+            false,
+            "semantic snapshot test".to_string(),
+        );
+        cx.windows[WindowId(window.window_index(), 0)]
+            .window_geom
+            .position = dvec2(30.0, 40.0);
+        let window = WidgetRef::new_with_inner(Box::new(window));
+        let window_uid = window.widget_uid();
         let root = make_semantic_widget(WidgetUid::new());
-        tree.set_root_widget(root.clone());
+        tree.observe_node(window_uid, id!(semantic_window), window.clone(), None);
+        tree.observe_node(root.widget_uid(), id!(semantic_root), root.clone(), Some(window_uid));
+        {
+            let mut inner = tree.inner.borrow_mut();
+            inner.dirty.clear();
+            WidgetTree::rebuild_dense(&mut inner);
+        }
 
         let snapshot = tree.snapshot(&cx);
         let item = snapshot
@@ -2822,12 +2842,13 @@ mod tests {
 
         assert_eq!(item.id, "row:orders");
         assert_eq!(item.widget_type, "TestTreeRow");
-        assert_eq!(item.window_id, "");
-        assert_eq!(item.window_index, 0);
+        assert_eq!(item.window_id, live_id_token(id!(semantic_window)));
+        assert_ne!(item.window_id, "");
+        assert_eq!(item.window_index, 1);
         assert!(item.visible);
         assert!(item.enabled);
-        assert_eq!(item.x, 10);
-        assert_eq!(item.y, 20);
+        assert_eq!(item.x, 40);
+        assert_eq!(item.y, 60);
         assert_eq!(item.width, 80);
         assert_eq!(item.height, 24);
         assert_eq!(item.text.as_deref(), Some("Orders"));
