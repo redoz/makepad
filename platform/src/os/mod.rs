@@ -56,6 +56,15 @@ pub mod linux;
 #[cfg(all(not(headless), any(target_os = "android", target_os = "linux")))]
 pub use crate::os::linux::*;
 
+// The headless backend's shared-framebuf signatures still name
+// `os::linux::dma_buf` types; dma_buf is self-contained data, so expose just
+// that module when the windowed linux backend is compiled out.
+#[cfg(all(headless, any(target_os = "android", target_os = "linux")))]
+pub mod linux {
+    #[path = "dma_buf.rs"]
+    pub mod dma_buf;
+}
+
 #[cfg(all(test, not(headless), target_os = "macos"))]
 pub mod linux_test_stub;
 

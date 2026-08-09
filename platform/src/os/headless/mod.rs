@@ -168,4 +168,11 @@ impl Cx {
     ) -> Option<crate::os::shared_framebuf::LinuxOwnedImage> {
         None
     }
+
+    /// The headless backend compiles shaders synchronously, so the slug text
+    /// path never has to wait on a window-variant shader.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    pub fn is_draw_shader_window_ready(&self, _shader_id: crate::draw_shader::DrawShaderId) -> bool {
+        true
+    }
 }

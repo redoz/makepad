@@ -1,23 +1,29 @@
 use std::ffi::c_void;
 
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "windows",
-    all(target_os = "macos", not(headless)),
-    all(target_os = "ios", not(headless))
+#[cfg(all(
+    not(headless),
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "ios"
+    )
 ))]
 use crate::cx::Cx;
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "windows",
-    all(target_os = "macos", not(headless)),
-    all(target_os = "ios", not(headless))
+#[cfg(all(
+    not(headless),
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "ios"
+    )
 ))]
 use crate::texture::Texture;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(all(not(headless), any(target_os = "linux", target_os = "android")))]
 use crate::os::linux::gl_sys;
 
 /// GL API type.
@@ -39,9 +45,9 @@ pub enum GlApi {
 /// - Windows: ANGLE EGL context on makepad's D3D11 device (via libEGL.dll)
 /// - macOS: standalone CGL context bridged to Metal via IOSurface
 pub struct GlRenderBridge {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(all(not(headless), any(target_os = "linux", target_os = "android")))]
     pub(crate) inner: crate::os::linux::opengl::EglRenderBridge,
-    #[cfg(target_os = "windows")]
+    #[cfg(all(not(headless), target_os = "windows"))]
     pub(crate) inner: crate::os::windows::angle::AngleRenderBridge,
     #[cfg(all(target_os = "macos", not(headless)))]
     pub(crate) inner: crate::os::apple::metal::CglRenderBridge,
@@ -49,12 +55,15 @@ pub struct GlRenderBridge {
     pub(crate) inner: crate::os::apple::metal::EaglRenderBridge,
 }
 
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "windows",
-    all(target_os = "macos", not(headless)),
-    all(target_os = "ios", not(headless))
+#[cfg(all(
+    not(headless),
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "ios"
+    )
 ))]
 impl GlRenderBridge {
     /// Make this GL context current on the calling thread.
@@ -73,12 +82,15 @@ impl GlRenderBridge {
     }
 }
 
-#[cfg(not(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "windows",
-    all(target_os = "macos", not(headless)),
-    all(target_os = "ios", not(headless))
+#[cfg(not(all(
+    not(headless),
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "ios"
+    )
 )))]
 impl GlRenderBridge {
     pub fn make_current(&self) {}
@@ -93,7 +105,10 @@ impl GlRenderBridge {
 }
 
 // EGL platform accessors (Linux, Android, Windows)
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "windows"))]
+#[cfg(all(
+    not(headless),
+    any(target_os = "linux", target_os = "android", target_os = "windows")
+))]
 impl GlRenderBridge {
     pub fn egl_display(&self) -> *mut c_void {
         self.inner.egl_display()
@@ -121,7 +136,7 @@ impl GlRenderBridge {
 }
 
 // Cx methods: Linux
-#[cfg(target_os = "linux")]
+#[cfg(all(not(headless), target_os = "linux"))]
 impl Cx {
     /// Create a GL rendering bridge wrapping makepad's existing EGL context.
     pub fn create_gl_render_bridge(&mut self) -> GlRenderBridge {
@@ -188,7 +203,7 @@ impl Cx {
 }
 
 // Cx methods: Android
-#[cfg(target_os = "android")]
+#[cfg(all(not(headless), target_os = "android"))]
 impl Cx {
     /// Create a GL rendering bridge wrapping makepad's existing EGL context.
     pub fn create_gl_render_bridge(&mut self) -> GlRenderBridge {
@@ -282,7 +297,7 @@ impl Cx {
 }
 
 // Cx methods: Windows
-#[cfg(target_os = "windows")]
+#[cfg(all(not(headless), target_os = "windows"))]
 impl Cx {
     /// Create a GL rendering bridge via ANGLE on makepad's D3D11 device.
     pub fn create_gl_render_bridge(&mut self) -> GlRenderBridge {

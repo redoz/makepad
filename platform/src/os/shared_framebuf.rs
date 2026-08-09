@@ -29,7 +29,7 @@ const LINUX_SOFTWARE_FALLBACK_DRM_FOURCC: u32 = 0;
 #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 const LINUX_SOFTWARE_FALLBACK_DRM_MODIFIERS: u64 = u64::MAX;
 
-#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
+#[cfg(all(target_os = "linux", not(target_env = "ohos"), not(headless)))]
 #[derive(Debug)]
 pub struct LinuxSharedSoftwareBuffer {
     fd: std::os::fd::OwnedFd,
@@ -38,7 +38,7 @@ pub struct LinuxSharedSoftwareBuffer {
     pub stride: u32,
 }
 
-#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
+#[cfg(all(target_os = "linux", not(target_env = "ohos"), not(headless)))]
 impl LinuxSharedSoftwareBuffer {
     pub fn create(len: usize, stride: u32) -> std::io::Result<Self> {
         use std::os::fd::{AsRawFd, FromRawFd};
@@ -132,7 +132,7 @@ impl LinuxSharedSoftwareBuffer {
     }
 }
 
-#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
+#[cfg(all(target_os = "linux", not(target_env = "ohos"), not(headless)))]
 impl Drop for LinuxSharedSoftwareBuffer {
     fn drop(&mut self) {
         let _ = unsafe {
@@ -145,7 +145,7 @@ impl Drop for LinuxSharedSoftwareBuffer {
 pub struct HostPresentableImage {
     pub id: PresentableImageId,
     pub texture: Texture,
-    #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
+    #[cfg(all(target_os = "linux", not(target_env = "ohos"), not(headless)))]
     pub software_buffer: Option<LinuxSharedSoftwareBuffer>,
 }
 
@@ -182,7 +182,7 @@ impl HostSwapchain {
                             initial: true,
                         },
                     ),
-                    #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
+                    #[cfg(all(target_os = "linux", not(target_env = "ohos"), not(headless)))]
                     software_buffer: None,
                 }
             }),
@@ -286,21 +286,21 @@ impl LinuxOwnedImage {
     }
 }
 
-#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
+#[cfg(all(target_os = "linux", not(target_env = "ohos"), not(headless)))]
 #[derive(Debug)]
 pub struct LinuxPresentableImage {
     pub id: PresentableImageId,
     pub image: LinuxOwnedImage,
 }
 
-#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
+#[cfg(all(target_os = "linux", not(target_env = "ohos"), not(headless)))]
 #[derive(Debug)]
 pub enum SharedSwapchainCreateError {
     AuxChannelSend(std::io::Error),
     SoftwareFallback(std::io::Error),
 }
 
-#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
+#[cfg(all(target_os = "linux", not(target_env = "ohos"), not(headless)))]
 pub fn shared_presentable_image_recv_fds_from_aux_chan(
     image: SharedPresentableImage,
     client_endpoint: &aux_chan::ClientEndpoint,
@@ -313,7 +313,7 @@ pub fn shared_presentable_image_recv_fds_from_aux_chan(
     })
 }
 
-#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
+#[cfg(all(target_os = "linux", not(target_env = "ohos"), not(headless)))]
 fn software_fallback_image(
     host_image: &mut HostPresentableImage,
     alloc_width: u32,
@@ -360,7 +360,7 @@ fn software_fallback_image(
     Ok(LinuxOwnedImage::software_fallback(send_fd, stride))
 }
 
-#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
+#[cfg(all(target_os = "linux", not(target_env = "ohos"), not(headless)))]
 pub fn shared_swapchain_from_host_swapchain(
     host: &mut HostSwapchain,
     cx: &mut crate::cx::Cx,
@@ -444,7 +444,7 @@ pub fn shared_swapchain_from_host_swapchain(
 }
 
 /// Auxiliary communication channel, besides stdin (only on Linux).
-#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
+#[cfg(all(target_os = "linux", not(target_env = "ohos"), not(headless)))]
 pub mod aux_chan {
     use super::*;
     use crate::os::linux::ipc::{self as linux_ipc, FixedSizeEncoding};

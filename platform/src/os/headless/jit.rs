@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use std::ffi::{c_void, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -122,12 +123,12 @@ fn dylib_extension() -> &'static str {
     "bin"
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 pub struct HeadlessLoadedModule {
     handle: std::ptr::NonNull<c_void>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 impl HeadlessLoadedModule {
     pub fn load(path: &Path) -> Result<Self, String> {
         const RTLD_NOW: i32 = 2;
@@ -157,7 +158,7 @@ impl HeadlessLoadedModule {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 impl Drop for HeadlessLoadedModule {
     fn drop(&mut self) {
         unsafe {
@@ -166,7 +167,7 @@ impl Drop for HeadlessLoadedModule {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn last_dlerror() -> String {
     let err = unsafe { dlerror() };
     if err.is_null() {
@@ -177,7 +178,7 @@ fn last_dlerror() -> String {
         .into_owned()
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 unsafe extern "C" {
     fn dlopen(path: *const std::os::raw::c_char, mode: i32) -> *mut c_void;
     fn dlsym(handle: *mut c_void, symbol: *const std::os::raw::c_char) -> *mut c_void;
@@ -185,19 +186,25 @@ unsafe extern "C" {
     fn dlerror() -> *const std::os::raw::c_char;
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(unix))]
 pub struct HeadlessLoadedModule;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(unix))]
 impl HeadlessLoadedModule {
     pub fn load(path: &Path) -> Result<Self, String> {
         Err(format!(
-            "headless shader dlopen is only implemented on macOS for now (`{}`)",
+            "headless shader dlopen is only implemented on unix for now (`{}`)",
             path.display()
         ))
     }
 
     pub fn shader_version(&self) -> Result<u32, String> {
-        Err("headless shader version lookup is only implemented on macOS for now".to_string())
+        Err("headless shader version lookup is only implemented on unix for now".to_string())
+    }
+
+    pub fn symbol<F: Sized>(&self, symbol: &str) -> Result<F, String> {
+        Err(format!(
+            "headless shader symbol lookup is only implemented on unix for now (`{symbol}`)"
+        ))
     }
 }

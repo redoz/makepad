@@ -1756,12 +1756,12 @@ pub fn can_play_type(mime: &str) -> &'static str {
     can_play_type_impl(mime)
 }
 
-#[cfg(all(target_os = "linux", not(target_os = "android")))]
+#[cfg(all(target_os = "linux", not(target_os = "android"), not(headless)))]
 fn can_play_type_impl(mime: &str) -> &'static str {
     crate::os::linux::linux_video_playback::can_play_type(mime)
 }
 
-#[cfg(target_os = "android")]
+#[cfg(all(target_os = "android", not(headless)))]
 fn can_play_type_impl(mime: &str) -> &'static str {
     crate::os::linux::android::android_video_playback::can_play_type(mime)
 }
@@ -1782,9 +1782,17 @@ fn can_play_type_impl(_mime: &str) -> &'static str {
     ""
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", not(headless)))]
 fn can_play_type_impl(mime: &str) -> &'static str {
     crate::os::windows::windows_video_playback::WindowsVideoPlayer::can_play_type(mime)
+}
+
+#[cfg(all(
+    any(target_os = "linux", target_os = "android", target_os = "windows"),
+    headless
+))]
+fn can_play_type_impl(_mime: &str) -> &'static str {
+    ""
 }
 
 #[cfg(not(any(
