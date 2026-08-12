@@ -37,7 +37,7 @@ use {
     },
     std::{
         any::{Any, TypeId},
-        cell::RefCell,
+        cell::{Cell, RefCell},
         collections::{HashMap, HashSet},
         rc::Rc,
         sync::Arc,
@@ -182,7 +182,11 @@ pub struct Cx {
     /// as the widget hierarchy changes require parent views to rebuild their widget queries.
     pub widget_query_invalidation_event: Option<u64>,
 
-    pub widget_tree_ptr: *mut (),
+    /// Per-`Cx` widget-tree state, owned by the widgets crate (which is the
+    /// only thing that knows the pointee type). A `Cell` so the widgets crate
+    /// can lazily allocate it from `&Cx`, keeping the tree per-`Cx` instead of
+    /// falling back to a process-wide one shared across threads.
+    pub widget_tree_ptr: Cell<*mut ()>,
     pub widget_tree_dump_callback: Option<fn(&Cx) -> String>,
     pub widget_query_callback: Option<fn(&Cx, &str) -> Vec<String>>,
     pub widget_snapshot_callback: Option<fn(&Cx) -> Vec<WidgetSnapshot>>,
@@ -499,7 +503,7 @@ impl Cx {
             widget_tree_dump_requests: Default::default(),
             widget_snapshot_requests: Default::default(),
             widget_query_invalidation_event: None,
-            widget_tree_ptr: std::ptr::null_mut(),
+            widget_tree_ptr: Cell::new(std::ptr::null_mut()),
             widget_tree_dump_callback: None,
             widget_query_callback: None,
             widget_snapshot_callback: None,

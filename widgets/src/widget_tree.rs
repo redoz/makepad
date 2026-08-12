@@ -16,12 +16,6 @@ use {
     std::fmt::Write,
 };
 
-// WidgetTree contains weak widget refs (Rc/Weak-based) and RefCell,
-// but we only ever access the tree from the main thread.
-// The OnceLock for the empty static tree requires Sync.
-unsafe impl Send for WidgetTree {}
-unsafe impl Sync for WidgetTree {}
-
 const NONE: u32 = u32::MAX;
 
 fn allow_duplicate_sibling_names(name: LiveId) -> bool {
@@ -2445,12 +2439,16 @@ pub struct WidgetTreeState {
 }
 
 impl WidgetTreeState {
-    fn get_or_init(cx: &mut Cx) -> &mut WidgetTreeState {
-        if cx.widget_tree_ptr.is_null() {
+    /// The state belongs to this one `Cx` and is allocated on first use.
+    /// Every `WidgetTree` mutator takes `&self` (the graph lives behind a
+    /// `RefCell`), so a shared reference is enough for all callers and this
+    /// can be reached from `&Cx`.
+    fn get_or_init(cx: &Cx) -> &WidgetTreeState {
+        if cx.widget_tree_ptr.get().is_null() {
             let boxed = Box::new(WidgetTreeState::default());
-            cx.widget_tree_ptr = Box::into_raw(boxed) as *mut ();
+            cx.widget_tree_ptr.set(Box::into_raw(boxed) as *mut ());
         }
-        unsafe { &mut *(cx.widget_tree_ptr as *mut WidgetTreeState) }
+        unsafe { &*(cx.widget_tree_ptr.get() as *const WidgetTreeState) }
     }
 }
 
@@ -2470,7 +2468,7 @@ pub trait CxWidgetExt {
     );
 }
 
-fn get_or_init_state(cx: &mut Cx) -> &mut WidgetTreeState {
+fn get_or_init_state(cx: &Cx) -> &WidgetTreeState {
     WidgetTreeState::get_or_init(cx)
 }
 
@@ -2498,12 +2496,7 @@ pub fn set_ui_root(cx: &mut Cx, ui: &WidgetRef) {
 
 impl CxWidgetExt for Cx {
     fn widget_tree(&self) -> &WidgetTree {
-        if self.widget_tree_ptr.is_null() {
-            static EMPTY: std::sync::OnceLock<WidgetTree> = std::sync::OnceLock::new();
-            return EMPTY.get_or_init(WidgetTree::default);
-        }
-        let state = unsafe { &*(self.widget_tree_ptr as *const WidgetTreeState) };
-        &state.tree
+        &get_or_init_state(self).tree
     }
 
     fn widget_tree_mark_dirty(&mut self, uid: WidgetUid) {
@@ -2530,12 +2523,7 @@ impl CxWidgetExt for Cx {
 impl<'a, 'b> CxWidgetExt for Cx2d<'a, 'b> {
     fn widget_tree(&self) -> &WidgetTree {
         let cx: &Cx = self;
-        if cx.widget_tree_ptr.is_null() {
-            static EMPTY: std::sync::OnceLock<WidgetTree> = std::sync::OnceLock::new();
-            return EMPTY.get_or_init(WidgetTree::default);
-        }
-        let state = unsafe { &*(cx.widget_tree_ptr as *const WidgetTreeState) };
-        &state.tree
+        &get_or_init_state(cx).tree
     }
 
     fn widget_tree_mark_dirty(&mut self, uid: WidgetUid) {
@@ -2565,12 +2553,7 @@ impl<'a, 'b> CxWidgetExt for Cx2d<'a, 'b> {
 impl<'a, 'b> CxWidgetExt for Cx3d<'a, 'b> {
     fn widget_tree(&self) -> &WidgetTree {
         let cx: &Cx = self;
-        if cx.widget_tree_ptr.is_null() {
-            static EMPTY: std::sync::OnceLock<WidgetTree> = std::sync::OnceLock::new();
-            return EMPTY.get_or_init(WidgetTree::default);
-        }
-        let state = unsafe { &*(cx.widget_tree_ptr as *const WidgetTreeState) };
-        &state.tree
+        &get_or_init_state(cx).tree
     }
 
     fn widget_tree_mark_dirty(&mut self, uid: WidgetUid) {
@@ -4051,5 +4034,34 @@ mod tests {
             new_label_uid,
             "WidgetRef::widget should refresh the same dynamic branch that child_by_path sees"
         );
+    }
+
+    // A `Cx` that never called `set_ui_root` still has to resolve widget
+    // queries. Each `Cx` must own that tree: two threads each building their
+    // own `Cx` used to land on one process-wide fallback tree and race on its
+    // `RefCell` ("RefCell already borrowed"), which made every headless widget
+    // test flaky under `cargo test`'s thread pool.
+    #[test]
+    fn test_widget_tree_without_ui_root_is_per_cx_not_process_wide() {
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    for _ in 0..200 {
+                        let cx = Cx::new(Box::new(|_, _| {}));
+                        let child_uid = WidgetUid::new();
+                        let child = make_widget(child_uid, vec![]);
+                        let root = make_widget(
+                            WidgetUid::new(),
+                            vec![(name("child"), child)],
+                        );
+                        // No `set_ui_root`: this is the fallback-tree path.
+                        assert_eq!(root.widget(&cx, &[name("child")]).widget_uid(), child_uid);
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().expect("no thread may panic on a shared tree");
+        }
     }
 }
